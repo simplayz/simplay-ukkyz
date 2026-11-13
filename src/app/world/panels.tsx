@@ -7,7 +7,10 @@ import { computeTotals, lockCountdown } from "@/engine/simulation";
 import { formatCoord, tileForLngLat } from "@/engine/geo";
 import { KIND_MAP } from "@/engine/buildings";
 import { SPAWNS, myClaims, useWorld } from "./store";
+import { useTheme } from "../theme-store";
 import { engineFocus, engineTeleport } from "./viewport";
+import { BASE_THEMES, type ThemeId } from "@/engine/themes";
+import { CARTO_PALETTE, contrastRatio, paintFlatColor, swatches, type MapPalette } from "@/engine/palette";
 import type { ClaimDTO, WorldConfigDTO } from "@/lib/types";
 
 const CATEGORIES: BuildCategory[] = ["habitat", "food", "network", "commerce", "industry", "civic", "defense", "luxury"];
@@ -27,9 +30,9 @@ function Bar({ label, value, max, color = "#7df0c0" }: { label: string; value: n
     <div className="space-y-1">
       <div className="flex items-baseline justify-between">
         <span className="label">{label}</span>
-        <span className="text-[11px] text-slate-200 tabular-nums">{value}</span>
+        <span className="text-[11px] text-ink tabular-nums">{value}</span>
       </div>
-      <div className="h-[3px] w-full bg-[#12222c]">
+      <div className="h-[3px] w-full bg-line/50">
         <div className="h-full" style={{ width: `${pct}%`, background: color, boxShadow: `0 0 10px ${color}` }} />
       </div>
     </div>
@@ -39,7 +42,8 @@ function Bar({ label, value, max, color = "#7df0c0" }: { label: string; value: n
 /* ------------------------------- top bar ------------------------------- */
 
 export function TopBar({ telemetry }: { telemetry: { fps: number; draws: number; tris: number; tiles: string; alt: number; speed: number } }) {
-  const { config, player, mode, setMode, setPanel, timeOfDay, setTimeOfDay, showTiles, setShowTiles, hover, refresh, claims } = useWorld();
+  const { config, player, mode, setMode, setPanel, timeOfDay, setTimeOfDay, hover, refresh, claims } = useWorld();
+  const themeName = useTheme((s) => s.theme.name);
   const now = useTick();
   const openTargets = claims.filter((c) => c.ownerId !== player?.id && lockCountdown(c.lockedUntil, now).open).length;
   const modes: { key: typeof mode; label: string; hint: string }[] = [
@@ -55,7 +59,7 @@ export function TopBar({ telemetry }: { telemetry: { fps: number; draws: number;
           <div className="absolute inset-[3px] bg-mint/80" style={{ clipPath: "polygon(50% 0,100% 100%,0 100%)" }} />
         </div>
         <div className="leading-none">
-          <div className="text-[13px] font-semibold tracking-[0.36em] text-slate-100">SIMPLAYZ</div>
+          <div className="text-[13px] font-semibold tracking-[0.36em] text-ink">SIMPLAYZ</div>
           <div className="label mt-[3px]">sector OS · z{config.tileZoom} · {new Date(now).toISOString().slice(11, 19)}Z</div>
         </div>
       </div>
@@ -68,7 +72,7 @@ export function TopBar({ telemetry }: { telemetry: { fps: number; draws: number;
         ))}
       </div>
 
-      <div className="hidden items-center gap-3 text-[11px] text-slate-400 lg:flex">
+      <div className="hidden items-center gap-3 text-[11px] text-dim lg:flex">
         <span className="chip px-2 py-1">{hover ? `${formatCoord(hover.lat, "lat")} ${formatCoord(hover.lng, "lng")}` : "aim the cursor at the world"}</span>
         <span className="chip px-2 py-1 tabular-nums">ELEV {hover ? `${hover.elev}m` : "—"}</span>
         <span className="chip px-2 py-1" style={{ borderColor: hover?.biomeColor }}>
@@ -81,23 +85,23 @@ export function TopBar({ telemetry }: { telemetry: { fps: number; draws: number;
         <div className="flex items-center gap-2">
           <span className="label">SUN</span>
           <input className="w-24" type="range" min={0} max={24} step={0.25} value={timeOfDay} onChange={(e) => setTimeOfDay(Number(e.target.value))} />
-          <span className="w-12 text-[11px] tabular-nums text-slate-300">{`${String(Math.floor(timeOfDay)).padStart(2, "0")}:${String(Math.round((timeOfDay % 1) * 60)).padStart(2, "0")}`}</span>
+          <span className="w-12 text-[11px] tabular-nums text-dim">{`${String(Math.floor(timeOfDay)).padStart(2, "0")}:${String(Math.round((timeOfDay % 1) * 60)).padStart(2, "0")}`}</span>
         </div>
-        <button className={`btn px-2 py-1.5 ${showTiles ? "btn-on" : ""}`} onClick={() => setShowTiles(!showTiles)} title="toggle streamed OSM raster — off shows pure engine terrain">
-          RASTER
+        <button className="btn px-2 py-1.5" onClick={() => setPanel("theme")} title="appearance — four glass themes">
+          {themeName.toUpperCase()}
         </button>
         <button className="btn px-2 py-1.5" onClick={() => setPanel("intel")}>INTEL</button>
         <button className="btn px-2 py-1.5" onClick={() => setPanel("config")}>WORLD CONFIG</button>
         <button className="btn px-2 py-1.5" onClick={() => setPanel("help")}>?</button>
         <div className="chip flex items-center gap-2 px-2 py-1">
           <span className="h-2 w-2 rounded-full" style={{ background: player?.color ?? "#68b7ff" }} />
-          <span className="text-[11px] text-slate-200">{player?.handle ?? "unregistered"}</span>
+          <span className="text-[11px] text-ink">{player?.handle ?? "unregistered"}</span>
           <span className="text-[11px] text-amber tabular-nums">{(player?.credits ?? 0).toLocaleString()} cr</span>
         </div>
         <button className="btn px-2 py-1.5" onClick={() => void refresh()} title="re-pull the world snapshot">SYNC</button>
       </div>
 
-      <div className="flex w-full items-center gap-4 border-t border-line/70 pt-1.5 text-[10px] uppercase tracking-[0.16em] text-slate-500">
+      <div className="flex w-full items-center gap-4 border-t border-line/70 pt-1.5 text-[10px] uppercase tracking-[0.16em] text-faint">
         <span className="text-mint">{openTargets} open targets</span>
         <span>fps {telemetry.fps}</span>
         <span>draw {telemetry.draws}</span>
@@ -105,7 +109,7 @@ export function TopBar({ telemetry }: { telemetry: { fps: number; draws: number;
         <span>tiles {telemetry.tiles}</span>
         <span>alt {telemetry.alt}m</span>
         <span>vel {telemetry.speed}m/s</span>
-        <span className="ml-auto text-slate-600">hallucinator-9 · seed {config.terrainSeed}</span>
+        <span className="ml-auto text-faint">hallucinator-9 · seed {config.terrainSeed}</span>
       </div>
     </div>
   );
@@ -146,10 +150,10 @@ export function PilotConsole() {
       <div>
         <div className="label">holdings</div>
         <div className="mt-1 flex items-end gap-2">
-          <span className="text-2xl leading-none text-slate-100 tabular-nums">{mine.length}</span>
+          <span className="text-2xl leading-none text-ink tabular-nums">{mine.length}</span>
           <span className="label mb-0.5">/ {config.maxClaims} parcels</span>
         </div>
-        <div className="mt-1 h-[3px] w-full bg-[#12222c]">
+        <div className="mt-1 h-[3px] w-full bg-line/50">
           <div className="h-full bg-mint" style={{ width: `${(mine.length / Math.max(1, config.maxClaims)) * 100}%` }} />
         </div>
       </div>
@@ -157,7 +161,7 @@ export function PilotConsole() {
       <div className="hairline h-px" />
 
       <div className="space-y-1.5">
-        {mine.length === 0 && <div className="text-[11px] leading-relaxed text-slate-500">No parcel held. Survey the ground, then lock 1 km² around a coordinate — the lock window is {config.lockHours}h.</div>}
+        {mine.length === 0 && <div className="text-[11px] leading-relaxed text-faint">No parcel held. Survey the ground, then lock 1 km² around a coordinate — the lock window is {config.lockHours}h.</div>}
         {mine.map((c) => (
           <ClaimCard key={c.id} claim={c} mine active={c.id === activeClaimId} onSelect={() => { setActiveClaim(c.id); setMode("build"); engineFocus(c.centerLng, c.centerLat, 520); }} now={now} />
         ))}
@@ -201,14 +205,14 @@ export function PilotConsole() {
         </div>
         {!player && <div className="text-[10px] text-rose/80">register a pilot before locking ground.</div>}
         {surveyPreview && <SurveyReadout survey={surveyPreview} />}
-        <div className="text-[10px] text-slate-500">
+        <div className="text-[10px] text-faint">
           parcel edge {config.claimSizeM} m ({((config.claimSizeM / 1000) ** 2).toFixed(2)} km²) · grid {config.gridCells}×{config.gridCells} · cell {(config.claimSizeM / config.gridCells).toFixed(1)} m
         </div>
         <div className="flex flex-wrap gap-1">
           {SPAWNS.map((s) => (
             <button
               key={s.name}
-              className="chip px-1.5 py-0.5 text-[10px] text-slate-400 hover:border-mint hover:text-mint"
+              className="chip px-1.5 py-0.5 text-[10px] text-dim hover:border-mint hover:text-mint"
               onClick={() => {
                 setLng(s.lng.toFixed(5));
                 setLat(s.lat.toFixed(5));
@@ -227,7 +231,7 @@ export function PilotConsole() {
 
       <div className="space-y-1.5">
         <div className="label">contested / open targets</div>
-        {claims.filter((c) => c.ownerId !== player?.id).length === 0 && <div className="text-[11px] text-slate-500">Nothing held by anyone else yet. You are alone on this planet.</div>}
+        {claims.filter((c) => c.ownerId !== player?.id).length === 0 && <div className="text-[11px] text-faint">Nothing held by anyone else yet. You are alone on this planet.</div>}
         {claims
           .filter((c) => c.ownerId !== player?.id)
           .map((c) => (
@@ -250,7 +254,7 @@ export function PilotConsole() {
 function SurveyReadout({ survey }: { survey: import("@/engine/terrain").SurveyResult }) {
   const p = survey.profile;
   return (
-    <div className="space-y-2 border border-line bg-[#070d12]/80 p-2">
+    <div className="space-y-2 border border-line bg-glass/80 p-2">
       <div className="flex items-center justify-between">
         <span className="label">engine survey</span>
         <span className="text-[10px] text-mint">{p.avgElevation}m avg · {p.avgSlope}° slope</span>
@@ -273,7 +277,7 @@ function SurveyReadout({ survey }: { survey: import("@/engine/terrain").SurveyRe
           </span>
         ))}
       </div>
-      <div className="text-[10px] text-slate-500">water {Math.round(p.waterFraction * 100)}% · canopy {Math.round(p.forestFraction * 100)}% · minerals {p.minerals.toFixed(2)}</div>
+      <div className="text-[10px] text-faint">water {Math.round(p.waterFraction * 100)}% · canopy {Math.round(p.forestFraction * 100)}% · minerals {p.minerals.toFixed(2)}</div>
     </div>
   );
 }
@@ -283,13 +287,13 @@ function ClaimCard({ claim, mine, active, onSelect, now }: { claim: ClaimDTO; mi
   const lock = lockCountdown(claim.lockedUntil, now);
   const totals = computeTotals(claim.buildings, null, config.gridCells);
   return (
-    <div className={`border p-2 transition ${active ? "border-mint/70 bg-mint/[0.06]" : "border-line bg-[#070d12]/70 hover:border-slate-600"}`}>
+    <div className={`border p-2 transition ${active ? "border-mint/70 bg-mint/[0.06]" : "border-line bg-glass/70 hover:border-dim/60"}`}>
       <button className="w-full text-left" onClick={onSelect}>
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-[12px] text-slate-100">{claim.name}</span>
+          <span className="truncate text-[12px] text-ink">{claim.name}</span>
           <span className={`shrink-0 text-[10px] tabular-nums ${lock.open ? "text-amber" : "text-ice"}`}>{lock.label}</span>
         </div>
-        <div className="mt-0.5 flex items-center gap-2 text-[10px] text-slate-500">
+        <div className="mt-0.5 flex items-center gap-2 text-[10px] text-faint">
           <span style={{ color: claim.owner?.color ?? "#6c8794" }}>{claim.owner?.handle ?? "unclaimed"}</span>
           <span>·</span>
           <span>{claim.buildings.length} structures</span>
@@ -303,9 +307,9 @@ function ClaimCard({ claim, mine, active, onSelect, now }: { claim: ClaimDTO; mi
             ["DEF", mine ? totals.defense : claim.defenseScore],
             ["PR", claim.prestige],
           ].map(([k, v]) => (
-            <div key={String(k)} className="bg-[#0b1319] py-0.5">
+            <div key={String(k)} className="bg-glass py-0.5">
               <div className="label">{k}</div>
-              <div className="text-[11px] tabular-nums text-slate-200">{Number(v)}</div>
+              <div className="text-[11px] tabular-nums text-ink">{Number(v)}</div>
             </div>
           ))}
         </div>
@@ -354,11 +358,11 @@ export function BuildPalette() {
         </div>
       </div>
       <div className="flex flex-wrap gap-1">
-        <button className={`chip px-1.5 py-0.5 text-[10px] ${cat === "all" ? "border-mint text-mint" : "text-slate-400"}`} onClick={() => setCat("all")}>
+        <button className={`chip px-1.5 py-0.5 text-[10px] ${cat === "all" ? "border-mint text-mint" : "text-dim"}`} onClick={() => setCat("all")}>
           ALL
         </button>
         {CATEGORIES.map((c) => (
-          <button key={c} className={`chip px-1.5 py-0.5 text-[10px] ${cat === c ? "border-mint text-mint" : "text-slate-400"}`} onClick={() => setCat(c)}>
+          <button key={c} className={`chip px-1.5 py-0.5 text-[10px] ${cat === c ? "border-mint text-mint" : "text-dim"}`} onClick={() => setCat(c)}>
             {CATEGORY_LABEL[c].toUpperCase()}
           </button>
         ))}
@@ -376,11 +380,11 @@ export function BuildPalette() {
               key={k.key}
               title={`${k.blurb}\n\nfootprint ${w}×${d} cells · ${k.cost} cr`}
               onClick={() => setSelectedKind(selected ? null : k.key)}
-              className={`group relative border p-1.5 text-left transition ${selected ? "border-mint bg-mint/10" : afford ? "border-line bg-[#070d12]/70 hover:border-slate-500" : "border-line/50 bg-[#070d12]/40 opacity-50"}`}
+              className={`group relative border p-1.5 text-left transition ${selected ? "border-mint bg-mint/10" : afford ? "border-line bg-glass/70 hover:border-dim/60" : "border-line/50 bg-glass/40 opacity-50"}`}
             >
               <span className="block h-8 w-full" style={{ background: `linear-gradient(160deg, ${k.color}, ${k.color}22)`, boxShadow: `inset 0 0 0 1px ${k.color}55` }} />
-              <span className="mt-1 block truncate text-[10.5px] leading-tight text-slate-200">{k.name}</span>
-              <span className="flex items-center justify-between text-[9.5px] text-slate-500">
+              <span className="mt-1 block truncate text-[10.5px] leading-tight text-ink">{k.name}</span>
+              <span className="flex items-center justify-between text-[9.5px] text-faint">
                 <span>{w}×{d} · {Math.round(k.floorHeight * k.storeys)}m</span>
                 <span className={afford ? "text-amber" : "text-rose"}>{k.cost}</span>
               </span>
@@ -390,23 +394,23 @@ export function BuildPalette() {
       </div>
 
       {selectedKind && KIND_MAP[selectedKind] && (
-        <div className="border border-mint/40 bg-mint/[0.05] p-2 text-[10px] leading-relaxed text-slate-300">
+        <div className="border border-mint/40 bg-mint/[0.05] p-2 text-[10px] leading-relaxed text-dim">
           <div className="flex items-center justify-between">
             <span className="text-mint">{KIND_MAP[selectedKind].name}</span>
             <button className="btn px-1.5 py-0.5" onClick={rotate}>ROT {rotation * 90}°</button>
           </div>
-          <p className="mt-1 text-slate-400">{KIND_MAP[selectedKind].blurb}</p>
+          <p className="mt-1 text-dim">{KIND_MAP[selectedKind].blurb}</p>
           <div className="mt-1 grid grid-cols-3 gap-1 text-center">
             {(["income", "population", "defense", "power", "food", "prestige"] as const).map((f) => (
               <div key={f}>
                 <div className="label">{f.slice(0, 3).toUpperCase()}</div>
-                <div className="text-[11px] tabular-nums text-slate-200">{KIND_MAP[selectedKind][f]}</div>
+                <div className="text-[11px] tabular-nums text-ink">{KIND_MAP[selectedKind][f]}</div>
               </div>
             ))}
           </div>
         </div>
       )}
-      <div className="text-[10px] text-slate-500">Click the parcel grid to place · R rotates · salvage mode clicks a structure to demolish it.</div>
+      <div className="text-[10px] text-faint">Click the parcel grid to place · R rotates · salvage mode clicks a structure to demolish it.</div>
     </div>
   );
 }
@@ -415,14 +419,14 @@ export function ParcelInspector() {
   const { claims, activeClaimId, config, player, upgrade, setMode } = useWorld();
   const claim = claims.find((c) => c.id === activeClaimId);
   const now = useTick(2000);
-  if (!claim) return <div className="panel pointer-events-auto border-y-0 border-r-0 p-3 text-[11px] text-slate-500 w-[300px]">no parcel selected</div>;
+  if (!claim) return <div className="panel pointer-events-auto border-y-0 border-r-0 p-3 text-[11px] text-faint w-[300px]">no parcel selected</div>;
   const totals = computeTotals(claim.buildings, null, config.gridCells);
   const mine = claim.ownerId === player?.id;
   const lock = lockCountdown(claim.lockedUntil, now);
   return (
     <div className="pointer-events-auto panel flex max-h-[46vh] w-[300px] flex-col gap-2 overflow-hidden border-y-0 border-r-0 p-3">
       <div className="flex items-baseline justify-between">
-        <span className="text-[12px] text-slate-100">{claim.name}</span>
+        <span className="text-[12px] text-ink">{claim.name}</span>
         <span className="label">{claim.status} · {lock.open ? "OPEN" : `SEALED ${lock.label}`}</span>
       </div>
       <div className="grid grid-cols-3 gap-1 text-center">
@@ -434,9 +438,9 @@ export function ParcelInspector() {
           ["CANOPY", `${Math.round(claim.profile.forestFraction * 100)}%`],
           ["DEF", String(claim.defenseScore)],
         ].map(([k, v]) => (
-          <div key={k} className="bg-[#0b1319] px-1 py-1">
+          <div key={k} className="bg-glass px-1 py-1">
             <div className="label">{k}</div>
-            <div className="text-[11px] tabular-nums text-slate-200">{v}</div>
+            <div className="text-[11px] tabular-nums text-ink">{v}</div>
           </div>
         ))}
       </div>
@@ -453,15 +457,15 @@ export function ParcelInspector() {
       </div>
       <div className="label">structures · {claim.buildings.length}</div>
       <div className="-mr-1 flex-1 space-y-1 overflow-y-auto pr-1">
-        {claim.buildings.length === 0 && <div className="text-[10px] text-slate-500">bare ground. raise something.</div>}
+        {claim.buildings.length === 0 && <div className="text-[10px] text-faint">bare ground. raise something.</div>}
         {claim.buildings.map((b) => {
           const k = KIND_MAP[b.kind];
           if (!k) return null;
           return (
-            <div key={b.id} className="flex items-center gap-2 border border-line bg-[#070d12]/60 px-1.5 py-1">
+            <div key={b.id} className="flex items-center gap-2 border border-line bg-glass/60 px-1.5 py-1">
               <span className="h-2.5 w-2.5 shrink-0" style={{ background: k.color }} />
-              <span className="min-w-0 flex-1 truncate text-[10.5px] text-slate-300">{k.name}</span>
-              <span className="text-[9.5px] text-slate-500">T{b.level}</span>
+              <span className="min-w-0 flex-1 truncate text-[10.5px] text-dim">{k.name}</span>
+              <span className="text-[9.5px] text-faint">T{b.level}</span>
               <span className="text-[9.5px] text-mint tabular-nums">{k.income * b.level}</span>
               {mine && (
                 <button className="btn px-1 py-0.5 text-[9px]" disabled={b.level >= 5} onClick={() => void upgrade(claim.id, b.id)}>
@@ -481,7 +485,11 @@ export function ParcelInspector() {
 export function Minimap() {
   const ref = useRef<HTMLCanvasElement | null>(null);
   const { center, claims, config, hover } = useWorld();
+  const themeMap = useTheme((s) => s.theme.map);
+  const mapStyle = useTheme((s) => s.mapStyle);
   const [size] = useState(176);
+  // the minimap is a tiny copy of the flat map: same painter, same ramps
+  const palette = mapStyle === "themed" ? themeMap : CARTO_PALETTE;
 
   useEffect(() => {
     const c = ref.current;
@@ -492,7 +500,7 @@ export function Minimap() {
     c.width = size;
     c.height = size;
     const span = config.claimSizeM * 3.4;
-    g.fillStyle = "#05090d";
+    g.fillStyle = palette.land[0];
     g.fillRect(0, 0, size, size);
     const cell = size / res;
     for (let y = 0; y < res; y++) {
@@ -502,11 +510,16 @@ export function Minimap() {
         const lng = center.lng + east / (111320 * Math.cos((center.lat * Math.PI) / 180));
         const lat = center.lat - south / metersPerDegLat;
         const s = quickSample(lng, lat, config.terrainSeed);
-        const b = BIOMES[s.biome] ?? BIOMES[4];
-        g.fillStyle = b.color;
-        const shade = 0.55 + sstep(-30, 260, s.h) * 0.55;
-        g.fillRect(x * cell, y * cell, cell + 0.6, cell + 0.6);
-        g.fillStyle = `rgba(0,0,0,${(1 - Math.min(1, shade)) * 0.55})`;
+        const rgb = paintFlatColor(palette, {
+          h: s.h,
+          wet: s.wet,
+          forest: s.forest,
+          urban: s.urban,
+          river: s.river,
+          biome: s.biome,
+          classified: s.biome,
+        });
+        g.fillStyle = `rgb(${Math.round(rgb.r)},${Math.round(rgb.g)},${Math.round(rgb.b)})`;
         g.fillRect(x * cell, y * cell, cell + 0.6, cell + 0.6);
       }
     }
@@ -516,19 +529,25 @@ export function Minimap() {
       const px = size / 2 + (east / span) * size;
       const py = size / 2 + (south / span) * size;
       const side = (cl.sizeM / span) * size;
-      g.strokeStyle = cl.ownerId ? "#7df0c0" : "#ffb454";
+      const mine = cl.ownerId && cl.ownerId === useWorld.getState().player?.id;
+      g.strokeStyle = cl.ownerId ? (mine ? "#7df0c0" : cl.owner?.color ?? "#ffb454") : "#ffb454";
       g.lineWidth = 1.2;
       g.strokeRect(px - side / 2, py - side / 2, side, side);
-      g.fillStyle = cl.ownerId ? "rgba(125,240,192,0.16)" : "rgba(255,180,84,0.14)";
+      g.fillStyle = cl.ownerId ? "rgba(125,240,192,0.18)" : "rgba(255,180,84,0.16)";
       g.fillRect(px - side / 2, py - side / 2, side, side);
     }
     if (hover) {
       const east = (hover.lng - center.lng) * 111320 * Math.cos((center.lat * Math.PI) / 180);
       const south = -(hover.lat - center.lat) * 110540;
-      g.fillStyle = "#ffffff";
-      g.fillRect(size / 2 + (east / span) * size - 1.5, size / 2 + (south / span) * size - 1.5, 3, 3);
+      g.fillStyle = "rgba(255,255,255,0.95)";
+      g.strokeStyle = "rgba(0,0,0,0.55)";
+      g.lineWidth = 1;
+      const hx = size / 2 + (east / span) * size;
+      const hy = size / 2 + (south / span) * size;
+      g.fillRect(hx - 1.5, hy - 1.5, 3, 3);
+      g.strokeRect(hx - 2, hy - 2, 4, 4);
     }
-  }, [center.lng, center.lat, claims, config.terrainSeed, config.claimSizeM, hover?.tile.x, hover?.tile.y, size]);
+  }, [center.lng, center.lat, claims, config.terrainSeed, config.claimSizeM, hover?.tile.x, hover?.tile.y, size, palette]);
 
   return (
     <div className="panel pointer-events-auto p-1.5">
@@ -565,12 +584,12 @@ export function EventTicker() {
       <div className="relative flex-1 overflow-hidden">
         <div className="flex w-max gap-8 whitespace-nowrap anim-ticker">
           {[...items, ...items].map((e, i) => (
-            <span key={`${e.id}-${i}`} className="text-[10.5px] text-slate-400">
-              <span className="text-slate-600">{new Date(e.createdAt).toISOString().slice(11, 16)}</span>{" "}
-              <span className={e.type === "assault" ? "text-rose" : e.type === "build" ? "text-mint/80" : "text-slate-300"}>[{e.type}]</span> {e.message}
+            <span key={`${e.id}-${i}`} className="text-[10.5px] text-dim">
+              <span className="text-faint">{new Date(e.createdAt).toISOString().slice(11, 16)}</span>{" "}
+              <span className={e.type === "assault" ? "text-rose" : e.type === "build" ? "text-mint/80" : "text-dim"}>[{e.type}]</span> {e.message}
             </span>
           ))}
-          {items.length === 0 && <span className="text-[10.5px] text-slate-600">no records yet — the feed fills as pilots lock ground.</span>}
+          {items.length === 0 && <span className="text-[10.5px] text-faint">no records yet — the feed fills as pilots lock ground.</span>}
         </div>
       </div>
     </div>
@@ -585,7 +604,7 @@ export function Toasts() {
         <div
           key={t.id}
           className={`anim-rise border px-3 py-1.5 text-[11px] backdrop-blur ${
-            t.tone === "good" ? "border-mint/60 bg-mint/10 text-mint" : t.tone === "bad" ? "border-rose/60 bg-rose/10 text-rose" : t.tone === "warn" ? "border-amber/60 bg-amber/10 text-amber" : "border-line bg-hull/80 text-slate-300"
+            t.tone === "good" ? "border-mint/60 bg-mint/10 text-mint" : t.tone === "bad" ? "border-rose/60 bg-rose/10 text-rose" : t.tone === "warn" ? "border-amber/60 bg-amber/10 text-amber" : "border-line bg-hull/80 text-dim"
           }`}
         >
           {t.text}
@@ -602,7 +621,7 @@ function Modal({ title, children, onClose, wide }: { title: string; children: Re
     <div className="fixed inset-0 z-50 grid place-items-center bg-void/80 p-6 backdrop-blur-sm" onClick={onClose}>
       <div className={`panel anim-rise relative max-h-[86vh] overflow-y-auto p-5 ${wide ? "w-[760px]" : "w-[460px]"} max-w-full`} onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-[13px] tracking-[0.3em] text-slate-100">{title}</h2>
+          <h2 className="text-[13px] tracking-[0.3em] text-ink">{title}</h2>
           <button className="btn px-2 py-1" onClick={onClose}>
             CLOSE
           </button>
@@ -621,7 +640,7 @@ export function OnboardModal() {
   if (panel !== "onboard") return null;
   return (
     <Modal title="PILOT REGISTRATION" onClose={() => setPanel(null)}>
-      <div className="space-y-3 text-[11px] leading-relaxed text-slate-400">
+      <div className="space-y-3 text-[11px] leading-relaxed text-dim">
         <p>Simplayz keeps no password file. A pilot id is minted, stored locally, and used as a bearer token for the ledger.</p>
         <label className="block">
           <span className="label">handle</span>
@@ -631,9 +650,9 @@ export function OnboardModal() {
           <span className="label">spawn sector</span>
           <div className="mt-1 grid grid-cols-2 gap-1.5">
             {SPAWNS.map((s) => (
-              <button key={s.name} className={`chip px-2 py-1.5 text-left text-[10.5px] ${spawn.name === s.name ? "border-mint text-mint" : "text-slate-400"}`} onClick={() => setSpawn(s)}>
+              <button key={s.name} className={`chip px-2 py-1.5 text-left text-[10.5px] ${spawn.name === s.name ? "border-mint text-mint" : "text-dim"}`} onClick={() => setSpawn(s)}>
                 {s.name}
-                <div className="text-[9px] text-slate-600">{s.lat.toFixed(3)}, {s.lng.toFixed(3)}</div>
+                <div className="text-[9px] text-faint">{s.lat.toFixed(3)}, {s.lng.toFixed(3)}</div>
               </button>
             ))}
           </div>
@@ -676,12 +695,12 @@ export function ConfigModal() {
         value={String(draft[k] ?? "")}
         onChange={(e) => setDraft({ ...draft, [k]: Number(e.target.value) } as WorldConfigDTO)}
       />
-      <span className="mt-0.5 block text-[9.5px] text-slate-600">{hint}</span>
+      <span className="mt-0.5 block text-[9.5px] text-faint">{hint}</span>
     </label>
   );
   return (
     <Modal title="WORLD CONFIG · Postgres row world_config" onClose={() => setPanel(null)} wide>
-      <div className="grid grid-cols-3 gap-3 text-slate-300">
+      <div className="grid grid-cols-3 gap-3 text-dim">
         {num("claimSizeM", "parcel edge (m)", "1 km² == 1000. Drives the grid cell size.")}
         {num("lockHours", "lock window (h)", "hours before another pilot may assault.")}
         {num("maxClaims", "max parcels / pilot", "hard ceiling enforced on claim.")}
@@ -696,9 +715,9 @@ export function ConfigModal() {
         <label className="block">
           <span className="label">tile source</span>
           <input className="mt-1 w-full px-2 py-1 text-[11px]" value={draft.tileSource} onChange={(e) => setDraft({ ...draft, tileSource: e.target.value })} />
-          <span className="mt-0.5 block text-[9.5px] text-slate-600">upstream raster consumed by the streamer.</span>
+          <span className="mt-0.5 block text-[9.5px] text-faint">upstream raster consumed by the streamer.</span>
         </label>
-        <label className="col-span-3 flex items-center gap-2 border border-line bg-[#070d12]/70 p-2 text-[11px]">
+        <label className="col-span-3 flex items-center gap-2 border border-line bg-glass/70 p-2 text-[11px]">
           <input type="checkbox" checked={draft.assaultEnabled} onChange={(e) => setDraft({ ...draft, assaultEnabled: e.target.checked })} />
           allow assaults after the lock window
         </label>
@@ -713,7 +732,7 @@ export function ConfigModal() {
         <button className="btn px-3 py-1.5" onClick={() => void saveConfig({ claimSizeM: 1000, lockHours: 72, maxClaims: 3, tileZoom: 15, reliefScale: 1.35, gridCells: 48 })}>
           RESET BRIEF DEFAULTS
         </button>
-        <span className="text-[10px] text-slate-500">changing relief or seed rebuilds every mesh in the sector.</span>
+        <span className="text-[10px] text-faint">changing relief or seed rebuilds every mesh in the sector.</span>
       </div>
     </Modal>
   );
@@ -734,15 +753,15 @@ export function IntelModal() {
           <div className="label mb-1.5">ledger</div>
           <table className="w-full text-[11px]">
             <tbody>
-              {leaderboard.length === 0 && <tr><td className="py-1 text-slate-600">no pilots registered</td></tr>}
+              {leaderboard.length === 0 && <tr><td className="py-1 text-faint">no pilots registered</td></tr>}
               {leaderboard.map((r, i) => (
-                <tr key={r.id} className={`border-b border-line/60 ${r.id === player?.id ? "text-mint" : "text-slate-300"}`}>
-                  <td className="py-1 pr-1 text-slate-600">{String(i + 1).padStart(2, "0")}</td>
+                <tr key={r.id} className={`border-b border-line/60 ${r.id === player?.id ? "text-mint" : "text-dim"}`}>
+                  <td className="py-1 pr-1 text-faint">{String(i + 1).padStart(2, "0")}</td>
                   <td className="py-1"><span className="mr-1.5 inline-block h-2 w-2" style={{ background: r.color }} />{r.handle}</td>
                   <td className="py-1 text-right tabular-nums">{r.claims}/{r.max ?? 3}</td>
                   <td className="py-1 text-right tabular-nums">{r.credits.toLocaleString()}</td>
-                  <td className="py-1 text-right tabular-nums text-slate-500">{r.reputation} rep</td>
-                  <td className="py-1 pl-2 text-right text-[10px] text-slate-600">{r.victories}W/{r.losses}L</td>
+                  <td className="py-1 text-right tabular-nums text-faint">{r.reputation} rep</td>
+                  <td className="py-1 pl-2 text-right text-[10px] text-faint">{r.victories}W/{r.losses}L</td>
                 </tr>
               ))}
             </tbody>
@@ -759,26 +778,26 @@ export function IntelModal() {
               ["tile hits", stats.tilesServed],
               ["surveys", stats.surveys],
             ].map(([k, v]) => (
-              <div key={String(k)} className="border border-line bg-[#070d12]/70 p-2">
+              <div key={String(k)} className="border border-line bg-glass/70 p-2">
                 <div className="label">{k}</div>
-                <div className="text-[15px] tabular-nums text-slate-100">{Number(v).toLocaleString()}</div>
+                <div className="text-[15px] tabular-nums text-ink">{Number(v).toLocaleString()}</div>
               </div>
             ))}
           </div>
           <div className="label mb-1.5 mt-3">feed</div>
           <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
             {events.map((e) => (
-              <div key={e.id} className="text-[10.5px] leading-snug text-slate-400">
-                <span className="text-slate-600">{new Date(e.createdAt).toISOString().slice(5, 16).replace("T", " ")}</span> {e.message}
+              <div key={e.id} className="text-[10.5px] leading-snug text-dim">
+                <span className="text-faint">{new Date(e.createdAt).toISOString().slice(5, 16).replace("T", " ")}</span> {e.message}
               </div>
             ))}
-            {events.length === 0 && <div className="text-[10.5px] text-slate-600">quiet.</div>}
+            {events.length === 0 && <div className="text-[10.5px] text-faint">quiet.</div>}
           </div>
         </div>
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
         {claims.slice(0, 6).map((c) => (
-          <button key={c.id} className="chip px-2 py-1 text-[10px] text-slate-400 hover:border-mint hover:text-mint" onClick={() => { engineFocus(c.centerLng, c.centerLat, 520); useWorld.getState().setActiveClaim(c.id); }}>
+          <button key={c.id} className="chip px-2 py-1 text-[10px] text-dim hover:border-mint hover:text-mint" onClick={() => { engineFocus(c.centerLng, c.centerLat, 520); useWorld.getState().setActiveClaim(c.id); }}>
             {c.name} · {c.buildings.length}s
           </button>
         ))}
@@ -797,19 +816,19 @@ export function HelpModal() {
   if (panel !== "help") return null;
   return (
     <Modal title="CONTROLS & PROTOCOL" onClose={() => setPanel(null)} wide>
-      <div className="grid grid-cols-2 gap-5 text-[11px] leading-relaxed text-slate-400">
+      <div className="grid grid-cols-2 gap-5 text-[11px] leading-relaxed text-dim">
         <div>
           <div className="label mb-1">camera</div>
           <ul className="space-y-1">
-            <li><b className="text-slate-200">drag LMB</b> — pan the sector</li>
-            <li><b className="text-slate-200">drag RMB / shift+drag</b> — orbit yaw &amp; pitch</li>
-            <li><b className="text-slate-200">wheel</b> — dolly · <b className="text-slate-200">Q / E</b> — slow orbit</li>
+            <li><b className="text-ink">drag LMB</b> — pan the sector</li>
+            <li><b className="text-ink">drag RMB / shift+drag</b> — orbit yaw &amp; pitch</li>
+            <li><b className="text-ink">wheel</b> — dolly · <b className="text-ink">Q / E</b> — slow orbit</li>
             <li>cursor over ground reports coordinate, elevation, biome and tile id from the engine</li>
           </ul>
           <div className="label mb-1 mt-3">build mode</div>
           <ul className="space-y-1">
-            <li>pick a structure, <b className="text-slate-200">click a cell</b> on your parcel to raise it</li>
-            <li><b className="text-slate-200">R</b> rotates the footprint · SALVAGE tool demolishes on click</li>
+            <li>pick a structure, <b className="text-ink">click a cell</b> on your parcel to raise it</li>
+            <li><b className="text-ink">R</b> rotates the footprint · SALVAGE tool demolishes on click</li>
             <li>water and cliff cells are refused; steep cells cost 60% more</li>
             <li>food needs farm score ≥ its threshold; dense builds need road adjacency or they run at 35%</li>
           </ul>
@@ -817,16 +836,16 @@ export function HelpModal() {
         <div>
           <div className="label mb-1">tour mode</div>
           <ul className="space-y-1">
-            <li><b className="text-slate-200">click the world</b> to capture the mouse · <b className="text-slate-200">Esc</b> releases</li>
-            <li><b className="text-slate-200">WASD</b> walk · <b className="text-slate-200">Shift</b> sprint · <b className="text-slate-200">Space</b> hop</li>
+            <li><b className="text-ink">click the world</b> to capture the mouse · <b className="text-ink">Esc</b> releases</li>
+            <li><b className="text-ink">WASD</b> walk · <b className="text-ink">Shift</b> sprint · <b className="text-ink">Space</b> hop</li>
             <li>ground, slope and biome come from the same survey the server scored</li>
           </ul>
           <div className="label mb-1 mt-3">sovereignty rules</div>
           <ul className="space-y-1">
-            <li>parcel edge = <b className="text-slate-200">world_config.claim_size_m</b> (1 km² by default)</li>
-            <li>a parcel is <b className="text-slate-200">sealed</b> for the configured lock window (72 h)</li>
+            <li>parcel edge = <b className="text-ink">world_config.claim_size_m</b> (1 km² by default)</li>
+            <li>a parcel is <b className="text-ink">sealed</b> for the configured lock window (72 h)</li>
             <li>after the seal expires anyone may assault; the engine resolves RECON → BREACH → HOLD → FLAG</li>
-            <li>max parcels per pilot = <b className="text-slate-200">max_claims</b>; all three numbers live in Postgres</li>
+            <li>max parcels per pilot = <b className="text-ink">max_claims</b>; all three numbers live in Postgres</li>
           </ul>
         </div>
       </div>
@@ -854,23 +873,23 @@ export function AssaultReport() {
           <span className={`text-[12px] tracking-[0.24em] ${r.success ? "text-mint" : "text-rose"}`}>{r.success ? "PARCEL SEIZED" : "ASSAULT REPELLED"}</span>
           <button className="btn px-1.5 py-0.5 text-[9px]" onClick={() => { useWorld.setState({ lastReport: null }); setPanel(null); }}>DISMISS</button>
         </div>
-        <p className="mt-1.5 text-[11px] leading-relaxed text-slate-300">{r.narrative}</p>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-dim">{r.narrative}</p>
         <div className="mt-2 grid grid-cols-4 gap-1.5 text-center">
-          <div className="bg-[#0b1319] p-1.5"><div className="label">attack</div><div className="text-[13px] tabular-nums text-slate-100">{r.attackerPower}</div></div>
-          <div className="bg-[#0b1319] p-1.5"><div className="label">defense</div><div className="text-[13px] tabular-nums text-slate-100">{r.defenderPower}</div></div>
-          <div className="bg-[#0b1319] p-1.5"><div className="label">margin</div><div className={`text-[13px] tabular-nums ${r.margin > 0 ? "text-mint" : "text-rose"}`}>{r.margin}</div></div>
-          <div className="bg-[#0b1319] p-1.5"><div className="label">credits</div><div className={`text-[13px] tabular-nums ${r.loot >= 0 ? "text-amber" : "text-rose"}`}>{r.loot >= 0 ? "+" : ""}{r.loot}</div></div>
+          <div className="bg-glass p-1.5"><div className="label">attack</div><div className="text-[13px] tabular-nums text-ink">{r.attackerPower}</div></div>
+          <div className="bg-glass p-1.5"><div className="label">defense</div><div className="text-[13px] tabular-nums text-ink">{r.defenderPower}</div></div>
+          <div className="bg-glass p-1.5"><div className="label">margin</div><div className={`text-[13px] tabular-nums ${r.margin > 0 ? "text-mint" : "text-rose"}`}>{r.margin}</div></div>
+          <div className="bg-glass p-1.5"><div className="label">credits</div><div className={`text-[13px] tabular-nums ${r.loot >= 0 ? "text-amber" : "text-rose"}`}>{r.loot >= 0 ? "+" : ""}{r.loot}</div></div>
         </div>
         <div className="mt-2 flex gap-1.5">
           {r.phases.map((p) => (
             <div key={p.name} className="flex-1 border border-line px-1.5 py-1">
               <div className="label">{p.name}</div>
-              <div className="mt-0.5 h-[3px] bg-[#12222c]"><div className="h-full bg-ice" style={{ width: `${Math.round(p.roll * 100)}%` }} /></div>
-              <div className="mt-0.5 text-[9px] text-slate-500">{Math.round(p.roll * 100)}%</div>
+              <div className="mt-0.5 h-[3px] bg-line/50"><div className="h-full bg-ice" style={{ width: `${Math.round(p.roll * 100)}%` }} /></div>
+              <div className="mt-0.5 text-[9px] text-faint">{Math.round(p.roll * 100)}%</div>
             </div>
           ))}
         </div>
-        <div className="mt-1.5 text-[10px] text-slate-500">reputation {r.reputationDelta >= 0 ? "+" : ""}{r.reputationDelta} · deterministic resolution, seeded by the ledger, replayable in world_events</div>
+        <div className="mt-1.5 text-[10px] text-faint">reputation {r.reputationDelta >= 0 ? "+" : ""}{r.reputationDelta} · deterministic resolution, seeded by the ledger, replayable in world_events</div>
       </div>
     </div>
   );
@@ -938,13 +957,13 @@ export function AdvisorAgent() {
     <div className="panel pointer-events-auto w-[292px] p-3">
       <div className="flex items-center justify-between">
         <span className="label">site agent · rule stack v4</span>
-        <span className={`text-[9px] ${thinking ? "text-mint anim-blink" : "text-slate-600"}`}>{thinking ? "evaluating" : `pass ${pass}`}</span>
+        <span className={`text-[9px] ${thinking ? "text-mint anim-blink" : "text-faint"}`}>{thinking ? "evaluating" : `pass ${pass}`}</span>
       </div>
       <div className="mt-2 space-y-1.5">
         {advice.map((a) => (
-          <div key={a.id} className={`border-l-2 bg-[#070d12]/70 px-2 py-1.5 ${a.tone === "bad" ? "border-l-rose" : a.tone === "warn" ? "border-l-amber" : a.tone === "good" ? "border-l-mint" : "border-l-ice"}`}>
+          <div key={a.id} className={`border-l-2 bg-glass/70 px-2 py-1.5 ${a.tone === "bad" ? "border-l-rose" : a.tone === "warn" ? "border-l-amber" : a.tone === "good" ? "border-l-mint" : "border-l-ice"}`}>
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] text-slate-100">{a.title}</span>
+              <span className="text-[11px] text-ink">{a.title}</span>
               {a.kind && mine && (
                 <button
                   className="btn shrink-0 px-1.5 py-0.5 text-[9px]"
@@ -960,11 +979,11 @@ export function AdvisorAgent() {
                 </button>
               )}
             </div>
-            <p className="mt-0.5 text-[10px] leading-relaxed text-slate-500">{a.detail}</p>
+            <p className="mt-0.5 text-[10px] leading-relaxed text-faint">{a.detail}</p>
           </div>
         ))}
       </div>
-      <div className="mt-2 flex items-center gap-2 text-[9px] uppercase tracking-[0.16em] text-slate-600">
+      <div className="mt-2 flex items-center gap-2 text-[9px] uppercase tracking-[0.16em] text-faint">
         <span>survey {claim ? `${(claim.profile.buildScore * 100).toFixed(0)} build` : "n/a"}</span>
         <span>·</span>
         <span>seal {lock.label}</span>
@@ -972,5 +991,186 @@ export function AdvisorAgent() {
         <span>{advice.length} orders</span>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------- themes ------------------------------- */
+
+/** mini flat-map preview: three bands painted from a real palette */
+function MapPreview({ palette, size = 64 }: { palette: MapPalette; size?: number }) {
+  const colors = swatches(palette);
+  return (
+    <div className="flex overflow-hidden border border-line/70" style={{ height: size * 0.5, width: size }}>
+      {[
+        { c: colors.water, flex: 3 },
+        { c: colors.sand, flex: 1 },
+        { c: colors.land, flex: 4 },
+      ].map((band) => (
+        <span key={band.c} style={{ background: band.c, flex: band.flex }} />
+      ))}
+    </div>
+  );
+}
+
+function ThemeCard({
+  id,
+  name,
+  blurb,
+  palette,
+  active,
+  onPick,
+  children,
+}: {
+  id: string;
+  name: string;
+  blurb: string;
+  palette: MapPalette;
+  active: boolean;
+  onPick: () => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onPick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onPick();
+        }
+      }}
+      aria-pressed={active}
+      className={`group relative w-full cursor-pointer overflow-hidden border p-2.5 text-left transition focus:outline-none focus-visible:border-mint ${
+        active ? "border-mint bg-mint/10" : "border-line/80 bg-glass/30 hover:border-dim/60"
+      }`}
+      data-theme-option={id}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className={`h-1.5 w-1.5 rounded-full ${active ? "bg-mint" : "bg-faint/60"}`} />
+            <span className="truncate text-[11.5px] text-ink">{name}</span>
+          </div>
+          <p className="mt-1 text-[9.5px] leading-relaxed text-dim">{blurb}</p>
+        </div>
+        <MapPreview palette={palette} size={52} />
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Theme picker. Four selectable looks, all glass:
+ *   Dark purplish · Light purplish · Custom · Random high-contrast
+ * plus the map-colour axis (true cartography vs theme-tinted ramps).
+ */
+export function ThemeModal() {
+  const { panel, setPanel } = useWorld();
+  const { themeId, theme, mapStyle, setTheme, setMapStyle, customGround, customAccent, setCustom, rerollChaos } = useTheme();
+  // no local draft state: the store is the single source of truth, so the
+  // pickers cannot drift from the painted theme (and no effect is needed).
+  const ground = customGround;
+  const accent = customAccent;
+  if (panel !== "theme") return null;
+
+  // the live, measured ratio for the theme currently painted — not a claim
+  const accentRatio = contrastRatio(theme.colors.mint, theme.colors.void).toFixed(1);
+
+  const options: { id: ThemeId; name: string; blurb: string; palette: MapPalette }[] = [
+    { id: "violet", name: "Dark purplish", blurb: "Indigo glass, orchid edges — the night-shift console.", palette: BASE_THEMES.find((t) => t.id === "violet")!.map },
+    { id: "lilac", name: "Light purplish", blurb: "Paper-lilac glass with plum type. Daylight readable.", palette: BASE_THEMES.find((t) => t.id === "lilac")!.map },
+    { id: "custom", name: "Custom colour", blurb: "Your ground + your accent. Contrast is enforced for you.", palette: theme.id === "custom" ? theme.map : BASE_THEMES.find((t) => t.id === "custom")!.map },
+    { id: "chaos", name: "Random high-contrast", blurb: "Rolled hues, verified legibility. Re-roll until it clicks.", palette: theme.id === "chaos" ? theme.map : BASE_THEMES.find((t) => t.id === "chaos")!.map },
+  ];
+
+  return (
+    <Modal title="APPEARANCE · GLASS 1.0.0" onClose={() => setPanel(null)} wide>
+      <div className="space-y-3 text-ink">
+        <div className="grid grid-cols-2 gap-2">
+          {options.map((o) => (
+            <ThemeCard
+              key={o.id}
+              id={o.id}
+              name={o.name}
+              blurb={o.blurb}
+              palette={o.palette}
+              active={themeId === o.id}
+              onPick={() => setTheme(o.id)}
+            >
+              {o.id === "custom" && (
+                <div className="mt-2 flex items-center gap-2" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                  <label className="flex items-center gap-1 text-[9px] uppercase tracking-[0.16em] text-faint">
+                    <input
+                      type="color"
+                      className="h-6 w-8"
+                      value={ground}
+                      onChange={(e) => setCustom(e.target.value, accent)}
+                      aria-label="ground colour"
+                    />
+                    ground
+                  </label>
+                  <label className="flex items-center gap-1 text-[9px] uppercase tracking-[0.16em] text-faint">
+                    <input
+                      type="color"
+                      className="h-6 w-8"
+                      value={accent}
+                      onChange={(e) => setCustom(ground, e.target.value)}
+                      aria-label="accent colour"
+                    />
+                    accent
+                  </label>
+                </div>
+              )}
+              {o.id === "chaos" && (
+                <span className="mt-2 inline-flex items-center gap-1 text-[9px] uppercase tracking-[0.16em] text-faint" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                  <button type="button" className="btn px-1.5 py-0.5 text-[9px]" onClick={() => rerollChaos()}>
+                    RE-ROLL
+                  </button>
+                  <span>contrast-checked</span>
+                </span>
+              )}
+            </ThemeCard>
+          ))}
+        </div>
+
+        <div className="hairline h-px" />
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="label">map colours</span>
+          <button className={`btn px-2 py-1 ${mapStyle === "cartographer" ? "btn-on" : ""}`} onClick={() => setMapStyle("cartographer")}>
+            CARTOGRAPHIC
+          </button>
+          <button className={`btn px-2 py-1 ${mapStyle === "themed" ? "btn-on" : ""}`} onClick={() => setMapStyle("themed")}>
+            THEME-TINTED
+          </button>
+          <span className="text-[10px] text-dim">
+            cartographic keeps hue = data (blue sea, grey beach, green land); theme-tinted moves the ramps into the current look.
+          </span>
+        </div>
+
+        <div className="flex items-center gap-3 border border-line/70 bg-glass/20 p-2">
+          <MapPreview palette={mapStyle === "themed" ? theme.map : CARTO_PALETTE} size={120} />
+          <div className="text-[10px] leading-relaxed text-dim">
+            <div className="text-ink">flat map · no relief shading</div>
+            <div>sea and lake → blue gradient · beach → grey gradient · mountain → green gradient</div>
+            <div className="text-faint">
+              accent {accentRatio}:1 on surface · generated themes are rejected below 4.5:1
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button className="btn btn-hot px-3 py-1.5" onClick={() => setPanel(null)}>
+            DONE
+          </button>
+          <button className="btn px-3 py-1.5" onClick={() => setTheme("cartographer")}>
+            RESET TO CARTOGRAPHER
+          </button>
+          <span className="text-[10px] text-faint">saved per browser · applies instantly, no reload</span>
+        </div>
+      </div>
+    </Modal>
   );
 }
