@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { tileCache, claims as claimsTable, buildings as buildingsTable } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { loadConfig } from "@/lib/server";
+import { logApiWarning, withApiLogging } from "@/lib/api-logging";
 
 export const dynamic = "force-dynamic";
 
@@ -65,7 +66,9 @@ function pngPlaceholder(label: string) {
   return out;
 }
 
-export async function GET(req: Request, ctx: { params: Promise<{ z: string; x: string; y: string }> }) {
+export const GET = withApiLogging(
+  "GET /api/tiles/[z]/[x]/[y]",
+  async (req: Request, ctx: { params: Promise<{ z: string; x: string; y: string }> }) => {
   const { z: zs, x: xs, y: ys } = await ctx.params;
   const z = Number(zs);
   const x = Number(xs);
@@ -86,7 +89,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ z: string; x: s
       .where(eq(tileCache.key, key))
       .limit(1);
     cached = rows[0] ?? null;
-  } catch {
+  } catch (error) {
+    logApiWarning("GET /api/tiles/[z]/[x]/[y]", req, "read tile cache", error);
     cached = null;
   }
 
@@ -94,10 +98,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ z: string; x: s
   if (fresh && !purge) {
     try {
       await db.update(tileCache).set({ hits: sql`${tileCache.hits} + 1` }).where(eq(tileCache.key, key));
-    } catch {
-      /* ignore */
+    } catch (error) {
+      logApiWarning("GET /api/tiles/[z]/[x]/[y]", req, "increment tile cache hit count", error);
     }
-    return respond(cached!.png, "cache", key, config.tileTtlHours, cached!.hits + 1);
+    return respond(req, cached!.png, "cache", key, config.tileTtlHours, cached!.hits + 1);
   }
 
   let upstream: Response | null = null;
@@ -109,8 +113,18 @@ export async function GET(req: Request, ctx: { params: Promise<{ z: string; x: s
       },
       cache: "no-store",
     });
-  } catch {
+  } catch (error) {
+    logApiWarning("GET /api/tiles/[z]/[x]/[y]", req, "fetch upstream tile", error);
     upstream = null;
+  }
+
+  if (upstream && !upstream.ok) {
+    logApiWarning(
+      "GET /api/tiles/[z]/[x]/[y]",
+      req,
+      "fetch upstream tile",
+      new Error(`Upstream returned HTTP ${upstream.status} ${upstream.statusText}`),
+    );
   }
 
   if (upstream && upstream.ok) {
@@ -124,19 +138,20 @@ export async function GET(req: Request, ctx: { params: Promise<{ z: string; x: s
       if ((count[0]?.n ?? 0) > MAX_CACHED_TILES) {
         await db.execute(sql`delete from tile_cache where key in (select key from tile_cache order by fetched_at asc limit 500)`);
       }
-    } catch {
-      /* cache write is best effort */
+    } catch (error) {
+      logApiWarning("GET /api/tiles/[z]/[x]/[y]", req, "write tile cache", error);
     }
-    return respond(buf, "origin", key, config.tileTtlHours, 0);
+    return respond(req, buf, "origin", key, config.tileTtlHours, 0);
   }
 
-  if (cached) return respond(cached.png, "stale", key, 0, cached.hits);
+  if (cached) return respond(req, cached.png, "stale", key, 0, cached.hits);
 
   const bytes = pngPlaceholder(key);
-  return respond(Buffer.from(bytes), "generated", key, 0, 0);
-}
+  return respond(req, Buffer.from(bytes), "generated", key, 0, 0);
+  },
+);
 
-async function respond(buf: Uint8Array | Buffer, source: string, key: string, ttlHours: number, hits: number) {
+async function respond(req: Request, buf: Uint8Array | Buffer, source: string, key: string, ttlHours: number, hits: number) {
   const [z, x, y] = key.split("/").map(Number);
   let overlay = "raw";
   try {
@@ -151,8 +166,8 @@ async function respond(buf: Uint8Array | Buffer, source: string, key: string, tt
       .where(sql`${claimsTable.tileZ} = ${z} and ${claimsTable.tileX} = ${x} and ${claimsTable.tileY} = ${y}`);
     const authored = (rows[0]?.n ?? 0) > 0;
     overlay = authored ? `player-authored:${rows[0]?.n ?? 0}parcel/${b[0]?.n ?? 0}structures` : "raw";
-  } catch {
-    /* ignore */
+  } catch (error) {
+    logApiWarning("GET /api/tiles/[z]/[x]/[y]", req, "calculate authored tile overlay", error);
   }
   return new Response(buf as unknown as BodyInit, {
     headers: {

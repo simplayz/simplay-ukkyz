@@ -4,6 +4,7 @@ import { buildings as buildingsTable } from "@/db/schema";
 import { KIND_MAP, upgradeCost } from "@/engine/buildings";
 import { checkPlacement } from "@/engine/simulation";
 import { addCredits, claimBuildings, claimDto, ensurePilot, findClaim, loadConfig, logEvent, newId, pilotFrom, spendCredits, surveyForClaim, syncClaimEconomy } from "@/lib/server";
+import { logApiError, readApiJson, withApiLogging } from "@/lib/api-logging";
 
 export const dynamic = "force-dynamic";
 
@@ -17,8 +18,8 @@ interface Body {
   rot?: number;
 }
 
-export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as Body;
+export const POST = withApiLogging("POST /api/buildings", async (req: Request) => {
+  const body = await readApiJson<Body>(req, "POST /api/buildings", {} as Body);
   const pilot = pilotFrom(req);
   const config = await loadConfig();
   const player = await ensurePilot(pilot);
@@ -92,6 +93,7 @@ export async function POST(req: Request) {
 
     return Response.json({ ok: false, error: `Unknown action ${body.action}` }, { status: 400 });
   } catch (error) {
+    logApiError("POST /api/buildings", req, error);
     return Response.json({ ok: false, error: error instanceof Error ? error.message : "build action failed" }, { status: 500 });
   }
-}
+});

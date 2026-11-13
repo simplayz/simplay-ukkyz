@@ -5,6 +5,7 @@ import { createClaim, ensurePilot, findClaim, loadConfig, logEvent, newId, pilot
 import { lockCountdown, resolveAssault } from "@/engine/simulation";
 import { tileForLngLat } from "@/engine/geo";
 import { eq } from "drizzle-orm";
+import { logApiError, readApiJson, withApiLogging } from "@/lib/api-logging";
 
 export const dynamic = "force-dynamic";
 
@@ -16,8 +17,8 @@ interface ClaimBody {
   lat?: number;
 }
 
-export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as ClaimBody;
+export const POST = withApiLogging("POST /api/claims", async (req: Request) => {
+  const body = await readApiJson<ClaimBody>(req, "POST /api/claims", {} as ClaimBody);
   const pilot = pilotFrom(req);
   const config = await loadConfig();
   const player = await ensurePilot(pilot);
@@ -115,9 +116,10 @@ export async function POST(req: Request) {
         return bad(`Unknown action ${body.action}`);
     }
   } catch (error) {
+    logApiError("POST /api/claims", req, error);
     return Response.json({ ok: false, error: error instanceof Error ? error.message : "claim action failed" }, { status: 500 });
   }
-}
+});
 
 async function requireOwn(claimId: string | undefined, playerId: string) {
   if (!claimId) return null;

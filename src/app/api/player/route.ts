@@ -3,6 +3,7 @@ import { players as playersTable } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { randomUUID, createHash } from "node:crypto";
 import { ensurePilot, loadConfig, logEvent, movePlayer, pilotFrom } from "@/lib/server";
+import { logApiError, readApiJson, withApiLogging } from "@/lib/api-logging";
 
 export const dynamic = "force-dynamic";
 
@@ -18,14 +19,14 @@ function handleFrom(seed: string) {
 }
 
 /** Register / update the local pilot identity (no passwords: a bearer id only). */
-export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as {
+export const POST = withApiLogging("POST /api/player", async (req: Request) => {
+  const body = await readApiJson(req, "POST /api/player", {} as {
     handle?: string;
     homeLng?: number;
     homeLat?: number;
     color?: string;
     adopt?: string;
-  };
+  });
   let pilot = pilotFrom(req);
   const config = await loadConfig();
   try {
@@ -57,15 +58,16 @@ export async function POST(req: Request) {
     }
     return Response.json({ ok: true, pilotId: pilot, player });
   } catch (error) {
+    logApiError("POST /api/player", req, error);
     return Response.json({ ok: false, error: error instanceof Error ? error.message : "pilot failed" }, { status: 500 });
   }
-}
+});
 
-export async function GET(req: Request) {
+export const GET = withApiLogging("GET /api/player", async (req: Request) => {
   const pilot = pilotFrom(req);
   const player = await ensurePilot(pilot);
   return Response.json({ ok: true, pilotId: pilot, player });
-}
+});
 
 function hashStr(s: string) {
   let n = 0;

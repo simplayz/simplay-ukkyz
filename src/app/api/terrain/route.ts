@@ -4,6 +4,7 @@ import { tileForLngLat } from "@/engine/geo";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { claims as claimsTable } from "@/db/schema";
+import { withApiLogging } from "@/lib/api-logging";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,7 @@ export const dynamic = "force-dynamic";
  *   GET  /api/terrain?debug=1              engine telemetry
  * ------------------------------------------------------------------ */
 
-export async function GET(req: Request) {
+export const GET = withApiLogging("GET /api/terrain", async (req: Request) => {
   const url = new URL(req.url);
   const config = await loadConfig();
   const claimId = url.searchParams.get("claim");
@@ -54,4 +55,4 @@ export async function GET(req: Request) {
     ms: Date.now() - t0,
     survey,
   });
-}
+});
