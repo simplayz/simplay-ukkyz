@@ -70,13 +70,22 @@ export async function GET(req: Request, ctx: { params: Promise<{ z: string; x: s
   const z = Number(zs);
   const x = Number(xs);
   const y = Number(ys);
-  if (![z, x, y].every((v) => Number.isFinite(v)) || z < 0 || z > 19 || x < 0 || y < 0 || x >= 2 ** z || y >= 2 ** z) {
+  // integers only: a fractional z would build "15.5/…" keys that never hit the cache
+  if (![z, x, y].every((v) => Number.isInteger(v)) || z < 0 || z > 19 || x < 0 || y < 0 || x >= 2 ** z || y >= 2 ** z) {
     return Response.json({ ok: false, error: "tile out of range" }, { status: 400 });
   }
   const config = await loadConfig();
   const key = `${z}/${x}/${y}`;
   const url = new URL(req.url);
   const purge = url.searchParams.get("purge") === "1";
+  if (purge) {
+    // a purge must evict the row, otherwise the next request serves it again
+    try {
+      await db.delete(tileCache).where(eq(tileCache.key, key));
+    } catch {
+      /* cache eviction is best effort */
+    }
+  }
 
   let cached: { png: Buffer; expiresAt: Date; hits: number } | null = null;
   try {
@@ -137,6 +146,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ z: string; x: s
 }
 
 async function respond(buf: Uint8Array | Buffer, source: string, key: string, ttlHours: number, hits: number) {
+  // `generated` is the 1x1 placeholder: never let a CDN cache it for 36 hours
+  const cacheable = ttlHours > 0 && source !== "generated";
   const [z, x, y] = key.split("/").map(Number);
   let overlay = "raw";
   try {
@@ -157,7 +168,7 @@ async function respond(buf: Uint8Array | Buffer, source: string, key: string, tt
   return new Response(buf as unknown as BodyInit, {
     headers: {
       "content-type": "image/png",
-      "cache-control": ttlHours > 0 ? `public, max-age=${Math.round(ttlHours * 3600)}, stale-while-revalidate=86400` : "no-store",
+      "cache-control": cacheable ? `public, max-age=${Math.round(ttlHours * 3600)}, stale-while-revalidate=86400` : "no-store",
       "x-simplayz-tile-source": source,
       "x-simplayz-tile-key": key,
       "x-simplayz-tile-hits": String(hits),

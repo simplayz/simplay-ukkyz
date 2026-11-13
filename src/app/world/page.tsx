@@ -27,7 +27,18 @@ export default function WorldPage() {
   const player = useWorld((s) => s.player);
   const claims = useWorld((s) => s.claims);
   const activeClaimId = useWorld((s) => s.activeClaimId);
-  const [telemetry, setTelemetry] = useState<Telemetry>({ fps: 0, draws: 0, tris: 0, tiles: "0/9", alt: 0, speed: 0 });
+  const [telemetry, setTelemetry] = useState<Telemetry>({
+    fps: 0,
+    draws: 0,
+    tris: 0,
+    tiles: "0/9",
+    alt: 0,
+    speed: 0,
+    layers: "stacked",
+    tileSource: "flat-engine",
+    overlay: "raw",
+    tileOpacity: 55,
+  });
 
   useEffect(() => {
     useTheme.getState().hydrate();

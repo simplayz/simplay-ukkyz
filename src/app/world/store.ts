@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import type { ClaimDTO, EventDTO, LeaderRow, PlayerDTO, WorldConfigDTO, WorldSnapshot } from "@/lib/types";
 import type { SurveyResult } from "@/engine/terrain";
+import type { MapLayers } from "./viewport";
 
 export type Mode = "bird" | "build" | "fps" | "tps";
 export type Tone = "info" | "good" | "warn" | "bad";
@@ -74,6 +75,10 @@ interface WorldStore {
   panel: null | "onboard" | "config" | "intel" | "help" | "theme";
   lastReport: Record<string, unknown> | null;
   timeOfDay: number;
+  /** flat base + stacked raster = "stacked" (default), "flat" = engine only, "raster" = full strength */
+  mapLayers: MapLayers;
+  /** raster opacity in stacked mode, 0..1 */
+  tileOpacity: number;
 
   boot: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -87,6 +92,8 @@ interface WorldStore {
   setHover: (h: HoverInfo | null) => void;
   setPanel: (p: WorldStore["panel"]) => void;
   setTimeOfDay: (v: number) => void;
+  setMapLayers: (v: MapLayers) => void;
+  setTileOpacity: (v: number) => void;
   toast: (text: string, tone?: Tone) => void;
   previewSurvey: (lng: number, lat: number) => Promise<void>;
   claimAt: (lng: number, lat: number, name: string) => Promise<boolean>;
@@ -142,6 +149,8 @@ export const useWorld = create<WorldStore>((set, get) => ({
   panel: null,
   lastReport: null,
   timeOfDay: 17.5,
+  mapLayers: "stacked",
+  tileOpacity: 0.55,
 
   toast: (text, tone = "info") => {
     const id = toastSeq++;
@@ -208,6 +217,8 @@ export const useWorld = create<WorldStore>((set, get) => ({
   setHover: (h) => set({ hover: h }),
   setPanel: (p) => set({ panel: p }),
   setTimeOfDay: (v) => set({ timeOfDay: v }),
+  setMapLayers: (v) => set({ mapLayers: v, tileOpacity: v === "stacked" ? Math.max(0.35, get().tileOpacity) : get().tileOpacity }),
+  setTileOpacity: (v) => set({ tileOpacity: v, mapLayers: v > 0 ? "stacked" : "flat" }),
 
   previewSurvey: async (lng, lat) => {
     if (get().surveyBusy) return;

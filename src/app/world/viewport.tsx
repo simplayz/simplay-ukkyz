@@ -138,14 +138,24 @@ interface EngineView {
   /** active UI theme (drives the flat map ramps when mapStyle is "themed") */
   theme: Theme;
   mapStyle: MapStyle;
+  /**
+   * How the streamed raster stacks on the flat map:
+   *   flat    engine cartography only (no network)
+   *   stacked flat base + raster overlay at `tileOpacity`
+   *   raster  raster at full strength (overlay opacity forced to 1)
+   */
+  mapLayers: MapLayers;
+  tileOpacity: number;
 }
+
+export type MapLayers = "flat" | "stacked" | "raster";
 
 interface EngineCallbacks {
   onHover: (info: HoverInfo | null) => void;
   onPlace: (cellX: number, cellY: number) => void;
   onPickBuilding: (claimId: string, buildingId: string) => void;
   onPickClaim: (claimId: string) => void;
-  onTelemetry: (t: { fps: number; draws: number; tris: number; tiles: string; alt: number; speed: number }) => void;
+  onTelemetry: (t: Telemetry) => void;
   onLeaveTour: () => void;
 }
 
@@ -181,6 +191,13 @@ export class SimplayzEngine {
   private sectorKey = "";
   private paletteKey = "";
   private tileSource = "flat-engine";
+  /** streamed raster planes stacked over the flat base */
+  private overlayMeshes: THREE.Mesh[] = [];
+  private mapLayers: MapLayers = "stacked";
+  private tileOpacity = 0.55;
+  /** provenance of the most recent tile the streamer returned */
+  private overlayState = "raw";
+  private overlayAborts: AbortController[] = [];
   private seed = 20770418;
   /** flat map ramp currently painted (colour-as-data cartography by default) */
   private map: MapPalette = CARTO_PALETTE;
@@ -332,6 +349,18 @@ export class SimplayzEngine {
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
     }
+    // cancel in-flight overlay fetches so a fast pan cannot paint stale tiles
+    for (const c of this.overlayAborts) c.abort();
+    this.overlayAborts = [];
+    for (const m of this.overlayMeshes) {
+      m.geometry.dispose();
+      const mat = m.material as THREE.MeshBasicMaterial;
+      mat.map?.dispose();
+      mat.dispose();
+    }
+    this.overlayMeshes = [];
+    this.overlayState = "raw";
+    this.tileSource = "flat-engine";
     this.sectorGroup.clear();
     this.tileMeshes = [];
     const center = this.tileOf();
@@ -396,8 +425,144 @@ export class SimplayzEngine {
     mesh.userData = { tile: { tx, ty }, palette: palette.mode };
     this.sectorGroup.add(mesh);
     this.tileMeshes.push(mesh);
-    this.tilesLoaded += 1;
-    this.tileSource = "flat-engine";
+
+    // the flat base is always drawn; the streamed raster stacks on top of it
+    this.buildTileOverlay(tx, ty);
+  }
+
+  /**
+   * STREAMED RASTER OVERLAY (stacked on the flat map)
+   * ----------------------------------------------------------------
+   * The flat base stays authoritative for `x-simplayz-overlay` reporting and for
+   * the click-to-place raycasts. The raster arrives from the internal streamer
+   * (`/api/tiles/{z}/{x}/{y}`) as a transparent-on-dark plane stacked just above
+   * the cartography, so the pilot sees real ground truth *through* the engine's
+   * colour language rather than instead of it.
+   *
+   * `fetch()` is used instead of an <img> so the response headers are readable:
+   * the streamer reports provenance (`cache` / `origin` / `stale` / `generated`)
+   * and whether the tile carries player-authored parcels. Both end up in the HUD.
+   */
+  private buildTileOverlay(tx: number, ty: number) {
+    if (this.mapLayers === "flat") return;
+    const size = this.frame.sizeM;
+    const off = this.frame.tileLocal(tx, ty);
+    const key = `15/${tx}/${ty}`;
+
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(size, size).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        // the raster is a semi-transparent drape; polygons already sit above it
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+      }),
+    );
+    plane.position.set(off.x + size / 2, 2.5, off.y + size / 2);
+    plane.userData = { tile: { tx, ty }, kind: "overlay" };
+    plane.visible = false;
+    this.sectorGroup.add(plane);
+    this.overlayMeshes.push(plane);
+
+    const controller = new AbortController();
+    this.overlayAborts.push(controller);
+    const sectorAtRequest = this.sectorKey;
+    void this.loadTileTexture(key, controller.signal)
+      .then((res) => {
+        if (this.disposed || !res) return;
+        // a fast pan can finish a fetch after its sector was torn down; the
+        // plane is already detached, so painting it would leak GPU memory
+        if (sectorAtRequest !== this.sectorKey || !plane.parent) {
+          (res.image as unknown as { close?: () => void }).close?.();
+          return;
+        }
+        const tex = new THREE.Texture(res.image);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = 4;
+        tex.needsUpdate = true;
+        const mat = plane.material as THREE.MeshBasicMaterial;
+        mat.map = tex;
+        mat.opacity = this.overlayOpacity();
+        mat.needsUpdate = true;
+        plane.visible = this.overlayOpacity() > 0;
+        plane.userData.tex = tex;
+        plane.userData.source = res.source;
+        this.tileSource = "streamer";
+        this.overlayState = res.overlay;
+        this.tilesLoaded += 1;
+        this.emitTelemetry();
+      })
+      .catch(() => {
+        /* offline or aborted: the flat base is already on screen */
+      });
+  }
+
+  /** fetch a tile through the internal streamer and decode it for three.js */
+  private async loadTileTexture(key: string, signal: AbortSignal) {
+    const res = await fetch(`/api/tiles/${key}`, { signal, headers: { accept: "image/png" } });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    const bitmap = await createImageBitmap(blob).catch(() => null);
+    if (!bitmap) return null;
+    return {
+      image: bitmap as unknown as HTMLImageElement,
+      source: res.headers.get("x-simplayz-tile-source") ?? "streamer",
+      overlay: res.headers.get("x-simplayz-overlay") ?? "raw",
+    };
+  }
+
+  /** effective opacity for the stacked raster under the current mode */
+  private overlayOpacity() {
+    if (this.mapLayers === "flat") return 0;
+    if (this.mapLayers === "raster") return 1;
+    return this.tileOpacity;
+  }
+
+  /** apply a layer/opacity change without rebuilding geometry */
+  private applyLayers() {
+    const op = this.overlayOpacity();
+    for (const plane of this.overlayMeshes) {
+      const mat = plane.material as THREE.MeshBasicMaterial;
+      mat.opacity = op;
+      mat.needsUpdate = true;
+      plane.visible = op > 0 && !!mat.map;
+    }
+    // Switching flat -> stacked/raster after the pilot panned in flat mode
+    // leaves tiles that never got an overlay plane. Compare per tile rather
+    // than "are there any overlays at all", or the un-overlaid ones stay blank.
+    if (op > 0) {
+      const have = new Set(
+        this.overlayMeshes.map((m) => {
+          const t = m.userData.tile as { tx: number; ty: number } | undefined;
+          return t ? `${t.tx}/${t.ty}` : "";
+        }),
+      );
+      for (const m of this.tileMeshes) {
+        const tile = m.userData.tile as { tx: number; ty: number } | undefined;
+        if (tile && !have.has(`${tile.tx}/${tile.ty}`)) this.buildTileOverlay(tile.tx, tile.ty);
+      }
+    }
+    this.emitTelemetry();
+  }
+
+  private emitTelemetry() {
+    if (this.disposed) return;
+    const info = this.renderer.info;
+    this.cb.onTelemetry({
+      fps: this.fps,
+      draws: info.render.calls,
+      tris: info.render.triangles,
+      tiles: `${this.tilesLoaded}/9`,
+      alt: Math.round(this.camera.position.y),
+      speed: Math.round(this.av.speed),
+      layers: this.mapLayers,
+      tileSource: this.tileSource,
+      overlay: this.overlayState,
+      tileOpacity: Math.round(this.overlayOpacity() * 100),
+    });
   }
 
   /**
@@ -464,6 +629,11 @@ export class SimplayzEngine {
     ].join("|");
     this.view = view;
     this.seed = view.config.terrainSeed;
+
+    const layersChanged = view.mapLayers !== this.mapLayers || view.tileOpacity !== this.tileOpacity;
+    this.mapLayers = view.mapLayers;
+    this.tileOpacity = view.tileOpacity;
+    if (layersChanged && !first) this.applyLayers();
 
     if (sectorKey !== this.sectorKey || first) {
       this.sectorKey = sectorKey;
@@ -968,15 +1138,7 @@ export class SimplayzEngine {
       this.fps = Math.round(this.frames / this.fpsClock);
       this.frames = 0;
       this.fpsClock = 0;
-      const info = this.renderer.info;
-      this.cb.onTelemetry({
-        fps: this.fps,
-        draws: info.render.calls,
-        tris: info.render.triangles,
-        tiles: `${this.tilesLoaded}/9`,
-        alt: Math.round(this.camera.position.y),
-        speed: Math.round(this.av.speed),
-      });
+      this.emitTelemetry();
     }
     this.renderer.render(this.scene, this.camera);
   };
@@ -1187,6 +1349,14 @@ export interface Telemetry {
   tiles: string;
   alt: number;
   speed: number;
+  /** which layer the pilot is looking at */
+  layers: MapLayers;
+  /** provenance reported by the streamer for the newest tile */
+  tileSource: string;
+  /** `raw` or `player-authored:<n>parcel/<n>structures` */
+  overlay: string;
+  /** effective raster opacity, 0-100 */
+  tileOpacity: number;
 }
 
 export default function WorldViewport({ onTelemetry }: { onTelemetry?: (t: Telemetry) => void }) {
@@ -1207,6 +1377,8 @@ export default function WorldViewport({ onTelemetry }: { onTelemetry?: (t: Telem
   const center = useWorld((s) => s.center);
   const theme = useTheme((s) => s.theme);
   const mapStyle = useTheme((s) => s.mapStyle);
+  const mapLayers = useWorld((s) => s.mapLayers);
+  const tileOpacity = useWorld((s) => s.tileOpacity);
   const mounted = useRef(false);
 
   useEffect(() => {
@@ -1241,8 +1413,8 @@ export default function WorldViewport({ onTelemetry }: { onTelemetry?: (t: Telem
 
   useEffect(() => {
     if (!mounted.current) return;
-    engineRef.current?.update({ claims, config, activeClaimId, mode, selectedKind, rotation, tool, timeOfDay, pilotId, theme, mapStyle });
-  }, [claims, config, activeClaimId, mode, selectedKind, rotation, tool, timeOfDay, pilotId, theme, mapStyle]);
+    engineRef.current?.update({ claims, config, activeClaimId, mode, selectedKind, rotation, tool, timeOfDay, pilotId, theme, mapStyle, mapLayers, tileOpacity });
+  }, [claims, config, activeClaimId, mode, selectedKind, rotation, tool, timeOfDay, pilotId, theme, mapStyle, mapLayers, tileOpacity]);
 
   return <div ref={hostRef} className="absolute inset-0 cursor-crosshair" />;
 }
