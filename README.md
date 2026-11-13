@@ -1,11 +1,12 @@
-# Simplayz — v1.0.0
+# Simplayz — v1.1.0
 
 **A persistent, browser-based sector simulation.**
 
 Pilots lock 1 km² parcels of real coordinates, raise structures on a 48×48 grid, earn credits on an economy tick,
-and assault each other's parcels once the seal expires. The world is rendered as a **flat cartographic map**: no
-relief shading, no raster — mountain, beach and sea are told apart by hue (green, grey and blue gradients), while a
-seeded procedural terrain engine still decides every cell underneath.
+and assault each other's parcels once the seal expires. The world is rendered as a **flat cartographic base with the
+live OSM raster stacked on top**: mountain, beach and sea are told apart by hue (green, grey and blue gradients),
+and the streamed imagery from `/api/tiles` is draped over it at 55% so ground truth and the engine's colour
+language are visible at the same time. A seeded procedural terrain engine decides every cell underneath.
 
 The interface is **glass-morphism** with four user-selectable themes (dark purplish, light purplish, custom colours,
 random high-contrast), applied live and persisted per browser.
@@ -15,6 +16,16 @@ Everything that can be tuned is a row in `world_config`. Nothing about the balan
 - **Stack:** Next.js 16 (App Router, Turbopack) · React 19 · TypeScript (strict) · Tailwind CSS 4 · three.js · zustand · Drizzle ORM · PostgreSQL
 - **Source size:** ~6.6k lines across 28 TypeScript files
 - **Working with an AI agent?** Read [`AGENT_BRIEF.md`](./AGENT_BRIEF.md) — it contains copy-paste prompts.
+
+## What 1.1.0 changed
+
+| Area | 1.1.0 behaviour |
+| --- | --- |
+| **Stacked raster** | `/api/tiles/{z}/{x}/{y}` is consumed by the renderer again — a `PlaneGeometry` per tile, textured from the streamer and draped at `y = 2.5` over the flat base (`buildTileOverlay()`) |
+| **Layer modes** | `FLAT` (no network, engine only) · `STACK` (default, raster at `tileOpacity`) · `RASTER` (full strength), plus an opacity slider. State lives in `mapLayers` / `tileOpacity` on the world store |
+| **Provenance in the HUD** | The telemetry strip reports the layer, raster %, and the streamer's own `x-simplayz-tile-source` / `x-simplayz-overlay`, read from `fetch()` response headers |
+| **Tile route fixes** | Placeholder tiles are `no-store` (were CDN-cached 36 h); `?purge=1` now evicts the row; fractional zoom rejected; overlay fetches aborted and bitmaps closed on sector rebuild |
+| **Review** | [`REVIEW_1.1.md`](./REVIEW_1.1.md) — audit against the product statement, defect list, enhancement plan |
 
 ## What 1.0.0 changed
 
@@ -561,9 +572,9 @@ Current, verified state — useful as a task list rather than a wish list.
 - **`adopt`** is accepted by `POST /api/player` but never used.
 - **Hero asset removed, not replaced.** The landing page no longer references `/images/sector-hero.jpg`; there
   is still no `public/` directory. The hero is a CSS `theme-glow` gradient, which is harder to customise than an image.
-- **`/api/tiles` is now orphaned in the UI.** The streamer route, tile cache table and `X-Simplayz-Overlay`
-  headers still work and are still public API, but nothing in the flat renderer requests them. Either repurpose the
-  streamer for authored overlays or retire it in a future release.
+- **`/api/tiles` is used again (1.1.0).** The flat base stays authoritative for raycasts and placement; the
+  streamed raster is a semi-transparent drape above it. It is still not the *surface* — see REVIEW_1.1.md §3.5 for
+  the missing relief pass.
 - **Flat map hides elevation.** Elevation still drives build cost, slope refusals and defense, but the map no longer
   draws it — a `ok: 2` steep cell looks identical to flat ground. Consider a hatch overlay.
 - **Duplicated config defaults** in four places (§6) — the most likely source of drift in this repo.

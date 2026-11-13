@@ -8,7 +8,7 @@ import { formatCoord, tileForLngLat } from "@/engine/geo";
 import { KIND_MAP } from "@/engine/buildings";
 import { SPAWNS, myClaims, useWorld } from "./store";
 import { useTheme } from "../theme-store";
-import { engineFocus, engineTeleport } from "./viewport";
+import { engineFocus, engineTeleport, type Telemetry } from "./viewport";
 import { BASE_THEMES, type ThemeId } from "@/engine/themes";
 import { CARTO_PALETTE, contrastRatio, paintFlatColor, swatches, type MapPalette } from "@/engine/palette";
 import type { ClaimDTO, WorldConfigDTO } from "@/lib/types";
@@ -41,8 +41,8 @@ function Bar({ label, value, max, color = "#7df0c0" }: { label: string; value: n
 
 /* ------------------------------- top bar ------------------------------- */
 
-export function TopBar({ telemetry }: { telemetry: { fps: number; draws: number; tris: number; tiles: string; alt: number; speed: number } }) {
-  const { config, player, mode, setMode, setPanel, timeOfDay, setTimeOfDay, hover, refresh, claims } = useWorld();
+export function TopBar({ telemetry }: { telemetry: Telemetry }) {
+  const { config, player, mode, setMode, setPanel, timeOfDay, setTimeOfDay, hover, refresh, claims, mapLayers, setMapLayers } = useWorld();
   const themeName = useTheme((s) => s.theme.name);
   const now = useTick();
   const openTargets = claims.filter((c) => c.ownerId !== player?.id && lockCountdown(c.lockedUntil, now).open).length;
@@ -90,6 +90,13 @@ export function TopBar({ telemetry }: { telemetry: { fps: number; draws: number;
         <button className="btn px-2 py-1.5" onClick={() => setPanel("theme")} title="appearance — four glass themes">
           {themeName.toUpperCase()}
         </button>
+        <div className="flex items-center gap-1" title="flat engine map + streamed OSM raster stacked on top">
+          {([["flat", "FLAT"], ["stacked", "STACK"], ["raster", "RASTER"]] as const).map(([k, label]) => (
+            <button key={k} className={`btn px-2 py-1.5 ${mapLayers === k ? "btn-on" : ""}`} onClick={() => setMapLayers(k)}>
+              {label}
+            </button>
+          ))}
+        </div>
         <button className="btn px-2 py-1.5" onClick={() => setPanel("intel")}>INTEL</button>
         <button className="btn px-2 py-1.5" onClick={() => setPanel("config")}>WORLD CONFIG</button>
         <button className="btn px-2 py-1.5" onClick={() => setPanel("help")}>?</button>
@@ -107,6 +114,10 @@ export function TopBar({ telemetry }: { telemetry: { fps: number; draws: number;
         <span>draw {telemetry.draws}</span>
         <span>tris {(telemetry.tris / 1000).toFixed(0)}k</span>
         <span>tiles {telemetry.tiles}</span>
+        <span className="text-faint">
+          layer {telemetry.layers} · raster {telemetry.tileOpacity}% · src {telemetry.tileSource}
+        </span>
+        <span className={telemetry.overlay === "raw" ? "text-faint" : "text-amber"}>{telemetry.overlay}</span>
         <span>alt {telemetry.alt}m</span>
         <span>vel {telemetry.speed}m/s</span>
         <span className="ml-auto text-faint">hallucinator-9 · seed {config.terrainSeed}</span>
