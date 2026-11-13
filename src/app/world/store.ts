@@ -71,10 +71,9 @@ interface WorldStore {
   surveyPreview: SurveyResult | null;
   surveyBusy: boolean;
   toasts: Toast[];
-  panel: null | "onboard" | "config" | "intel" | "help";
+  panel: null | "onboard" | "config" | "intel" | "help" | "theme";
   lastReport: Record<string, unknown> | null;
   timeOfDay: number;
-  showTiles: boolean;
 
   boot: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -88,7 +87,6 @@ interface WorldStore {
   setHover: (h: HoverInfo | null) => void;
   setPanel: (p: WorldStore["panel"]) => void;
   setTimeOfDay: (v: number) => void;
-  setShowTiles: (v: boolean) => void;
   toast: (text: string, tone?: Tone) => void;
   previewSurvey: (lng: number, lat: number) => Promise<void>;
   claimAt: (lng: number, lat: number, name: string) => Promise<boolean>;
@@ -144,7 +142,6 @@ export const useWorld = create<WorldStore>((set, get) => ({
   panel: null,
   lastReport: null,
   timeOfDay: 17.5,
-  showTiles: true,
 
   toast: (text, tone = "info") => {
     const id = toastSeq++;
@@ -211,7 +208,6 @@ export const useWorld = create<WorldStore>((set, get) => ({
   setHover: (h) => set({ hover: h }),
   setPanel: (p) => set({ panel: p }),
   setTimeOfDay: (v) => set({ timeOfDay: v }),
-  setShowTiles: (v) => set({ showTiles: v }),
 
   previewSurvey: async (lng, lat) => {
     if (get().surveyBusy) return;

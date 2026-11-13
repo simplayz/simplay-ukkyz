@@ -10,11 +10,14 @@
 import * as THREE from "three";
 import { useEffect, useRef } from "react";
 import { SectorFrame, metersPerPixel, tileForLngLat } from "@/engine/geo";
-import { BIOMES, heightAtLngLat, quickSample, sampleTerrain, surveyParcel, type SurveyResult } from "@/engine/terrain";
+import { BIOMES, quickSample, sampleTerrain, surveyParcel, type SurveyResult } from "@/engine/terrain";
 import { KIND_MAP, effectiveHeight, footprintFor } from "@/engine/buildings";
 import { hashSeed } from "@/engine/terrain";
+import { CARTO_PALETTE, paintFlatColor, type MapPalette } from "@/engine/palette";
+import type { MapStyle, Theme } from "@/engine/themes";
 import type { ClaimDTO, WorldConfigDTO } from "@/lib/types";
 import { useWorld, type HoverInfo, type Mode } from "./store";
+import { useTheme } from "../theme-store";
 
 const TILES_WIDE = 3;
 const SEG = 26;
@@ -131,8 +134,10 @@ interface EngineView {
   rotation: number;
   tool: "build" | "demolish" | "inspect";
   timeOfDay: number;
-  showTiles: boolean;
   pilotId: string | null;
+  /** active UI theme (drives the flat map ramps when mapStyle is "themed") */
+  theme: Theme;
+  mapStyle: MapStyle;
 }
 
 interface EngineCallbacks {
@@ -174,11 +179,11 @@ export class SimplayzEngine {
   private view: EngineView | null = null;
   private viewKey = "";
   private sectorKey = "";
-  private tileSource = "simplayz-streamer";
-  private tilesFailed = 0;
-  private relief = 1.35;
-  private showTiles = true;
+  private paletteKey = "";
+  private tileSource = "flat-engine";
   private seed = 20770418;
+  /** flat map ramp currently painted (colour-as-data cartography by default) */
+  private map: MapPalette = CARTO_PALETTE;
   private running = true;
   private frames = 0;
   private fpsClock = 0;
@@ -249,9 +254,9 @@ export class SimplayzEngine {
       side: THREE.BackSide,
       depthWrite: false,
       uniforms: {
-        top: { value: new THREE.Color("#1d4a72") },
-        bottom: { value: new THREE.Color("#e8b283") },
-        exponent: { value: 0.62 },
+        top: { value: new THREE.Color("#0d1a24") },
+        bottom: { value: new THREE.Color("#122630") },
+        exponent: { value: 1.6 },
       },
       vertexShader: `varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
       fragmentShader: `uniform vec3 top; uniform vec3 bottom; uniform float exponent; varying vec3 vPos;
@@ -278,18 +283,18 @@ export class SimplayzEngine {
     this.scene.add(this.stars);
   }
 
+  /**
+   * 1.0.0 is a flat map: sea and lakes are painted per-vertex by the
+   * palette, so there is no second water surface. The placeholder mesh is
+   * kept (invisible) because parcel fills and trail colours reference its
+   * transform helpers elsewhere in the tick loop.
+   */
   private buildWater() {
-    const geo = new THREE.PlaneGeometry(this.frame.sizeM * TILES_WIDE * 1.6, this.frame.sizeM * TILES_WIDE * 1.6, 24, 24);
+    const geo = new THREE.PlaneGeometry(1, 1, 1, 1);
     geo.rotateX(-Math.PI / 2);
-    const mat = new THREE.MeshPhongMaterial({
-      color: 0x0e3c58,
-      transparent: true,
-      opacity: 0.78,
-      shininess: 90,
-      specular: new THREE.Color(0x9fd6ff),
-    });
+    const mat = new THREE.MeshBasicMaterial({ visible: false });
     this.water = new THREE.Mesh(geo, mat);
-    this.water.position.y = 0.35;
+    this.water.visible = false;
     this.scene.add(this.water);
   }
 
@@ -303,7 +308,7 @@ export class SimplayzEngine {
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-    this.gridHelper = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x2b4c5e, transparent: true, opacity: 0.4 }));
+    this.gridHelper = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x9fb8c4, transparent: true, opacity: 0.14 }));
     this.gridHelper.position.y = 1.5;
     this.scene.add(this.gridHelper);
   }
@@ -316,7 +321,6 @@ export class SimplayzEngine {
     this.camRig.target.set(t.x, 0, t.y);
     this.av.pos.set(t.x, 0, t.y);
     const base = new THREE.Vector3(t.x, 0, t.y);
-    base.y = heightAtLngLat(lng, lat, this.seed) * this.relief;
     this.camRig.target.copy(base);
     this.av.pos.copy(base);
     this.rebuildSector();
@@ -326,9 +330,7 @@ export class SimplayzEngine {
   private rebuildSector() {
     for (const m of this.tileMeshes) {
       m.geometry.dispose();
-      const mat = m.material as THREE.MeshLambertMaterial;
-      mat.map?.dispose();
-      mat.dispose();
+      (m.material as THREE.Material).dispose();
     }
     this.sectorGroup.clear();
     this.tileMeshes = [];
@@ -345,6 +347,16 @@ export class SimplayzEngine {
     return tileForLngLat(this.frame.centerLng, this.frame.centerLat, 15);
   }
 
+  /**
+   * Paint one sector tile as flat map geometry.
+   *
+   * 1.0.0 renders the world "flat": no streamed raster, no relief shading,
+   * no fog. Elevation is communicated by hue instead of by light —
+   * sea/lake -> blue ramp, beach -> grey ramp, mountain/land -> green ramp.
+   * The ramps come from the palette module (or the active theme when the
+   * pilot picks "themed" map colours), so the exact same geometry can be
+   * repainted without rebuilding it.
+   */
   private buildOneTile(tx: number, ty: number) {
     const size = this.frame.sizeM;
     const geo = new THREE.PlaneGeometry(size, size, SEG, SEG);
@@ -354,88 +366,95 @@ export class SimplayzEngine {
     const off = this.frame.tileLocal(tx, ty);
     const ox = off.x + size / 2;
     const oy = off.y + size / 2;
-    const col = new THREE.Color();
-    let minY = 1e9;
-    let maxY = -1e9;
+    const palette = this.map;
     for (let i = 0; i < pos.count; i++) {
       const lx = ox + pos.getX(i);
       const ly = oy + pos.getZ(i);
       const ll = this.frame.localToLngLat(lx, ly);
       const s = quickSample(ll.lng, ll.lat, this.seed);
-      const y = s.h * this.relief;
-      pos.setY(i, y);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
-      const b = BIOMES[s.biome] ?? BIOMES[4];
-      col.set(b.color);
-      // relief shading + urban greywash so generated land reads differently from raster
-      const shade = 0.82 + Math.max(-0.25, Math.min(0.25, (y - s.h * this.relief * 0.5) / 900));
-      col.multiplyScalar(shade * (s.urban > 0.5 ? 1.12 : 1));
-      if (s.h < 2) col.lerp(new THREE.Color(0x0b2f47), Math.min(0.75, (2 - s.h) / 12));
-      colors[i * 3] = col.r;
-      colors[i * 3 + 1] = col.g;
-      colors[i * 3 + 2] = col.b;
+      // the surface is flat; the analytic relief is kept only for hero/impact maths
+      pos.setY(i, 0);
+      const rgb = paintFlatColor(palette, {
+        h: s.h,
+        wet: s.wet,
+        forest: s.forest,
+        urban: s.urban,
+        river: s.river,
+        biome: s.biome,
+        classified: s.biome,
+      });
+      colors[i * 3] = rgb.r / 255;
+      colors[i * 3 + 1] = rgb.g / 255;
+      colors[i * 3 + 2] = rgb.b / 255;
     }
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
-    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, color: 0xffffff });
+    // Unlit on purpose: flat cartography must not be shaded by the sun.
+    const mat = new THREE.MeshBasicMaterial({ vertexColors: true, color: 0xffffff });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(off.x + size / 2, 0, off.y + size / 2);
-    mesh.receiveShadow = true;
-    mesh.userData = { tile: { tx, ty } };
+    mesh.userData = { tile: { tx, ty }, palette: palette.mode };
     this.sectorGroup.add(mesh);
     this.tileMeshes.push(mesh);
-    void maxY;
-
-    // stream raster through the internal tile engine (with a direct-OSM fallback)
-    const key = `15/${tx}/${ty}`;
-    const img = new Image();
-    img.decoding = "async";
-    const apply = (source: string, from: HTMLImageElement) => {
-      const tex = new THREE.Texture(from);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.needsUpdate = true;
-      tex.anisotropy = 4;
-      mesh.userData.tex = tex;
-      if (this.showTiles) {
-        mat.map = tex;
-        mat.color.set(0xdce8ec);
-        mat.needsUpdate = true;
-      }
-      this.tilesLoaded += 1;
-      this.tileSource = source;
-    };
-    img.onload = () => apply("simplayz-streamer", img);
-    img.onerror = () => {
-      const fb = new Image();
-      fb.onload = () => apply("osm-direct", fb);
-      fb.onerror = () => {
-        this.tilesFailed += 1;
-      };
-      fb.src = `https://tile.openstreetmap.org/${key}.png`;
-    };
-    img.src = `/api/tiles/${key}`;
+    this.tilesLoaded += 1;
+    this.tileSource = "flat-engine";
   }
 
+  /**
+   * Repaint every streamed tile in place when the palette changes.
+   * Cheaper than a rebuild: geometry stays, only the colour attribute and
+   * the material flag are rewritten.
+   */
+  private repaintSector(palette: MapPalette) {
+    for (const m of this.tileMeshes) {
+      const geo = m.geometry;
+      const pos = geo.attributes.position as THREE.BufferAttribute;
+      const attr = geo.attributes.color as THREE.BufferAttribute;
+      if (!attr) continue;
+      const tile = m.userData.tile as { tx: number; ty: number } | undefined;
+      if (!tile) continue;
+      const off = this.frame.tileLocal(tile.tx, tile.ty);
+      const size = this.frame.sizeM;
+      const ox = off.x + size / 2;
+      const oy = off.y + size / 2;
+      for (let i = 0; i < pos.count; i++) {
+        const ll = this.frame.localToLngLat(ox + pos.getX(i), oy + pos.getZ(i));
+        const s = quickSample(ll.lng, ll.lat, this.seed);
+        const rgb = paintFlatColor(palette, {
+          h: s.h,
+          wet: s.wet,
+          forest: s.forest,
+          urban: s.urban,
+          river: s.river,
+          biome: s.biome,
+          classified: s.biome,
+        });
+        attr.setXYZ(i, rgb.r / 255, rgb.g / 255, rgb.b / 255);
+      }
+      attr.needsUpdate = true;
+      m.userData.palette = palette.mode;
+    }
+  }
+
+  /**
+   * Ground height for anything that must sit on the surface. The 1.0.0
+   * world is rendered flat, so this is always 0 — the analytic relief is
+   * still available via the terrain module for gameplay maths (the survey
+   * runs on real elevation even though the map does not show it).
+   */
   private localGround(lx: number, lz: number) {
-    const ll = this.frame.localToLngLat(lx, lz);
-    return heightAtLngLat(ll.lng, ll.lat, this.seed) * this.relief;
+    void lx;
+    void lz;
+    return 0;
   }
 
   /* ------------------------------ claims ------------------------------ */
 
   private applyView(view: EngineView) {
     const first = !this.view;
-    const sectorKey = [view.config.terrainSeed, view.config.reliefScale].join("|");
-    if (view.showTiles !== this.showTiles) {
-      this.showTiles = view.showTiles;
-      for (const m of this.tileMeshes) {
-        const mat = m.material as THREE.MeshLambertMaterial;
-        mat.map = view.showTiles ? ((m.userData.tex as THREE.Texture | undefined) ?? null) : null;
-        mat.color.set(view.showTiles ? 0xdce8ec : 0xffffff);
-        mat.needsUpdate = true;
-      }
-    }
+    const palette = view.mapStyle === "themed" ? view.theme.map : CARTO_PALETTE;
+    const sectorKey = [view.config.terrainSeed].join("|");
+    const paletteKey = [palette.mode, palette.water[0], palette.water[1], palette.sand[0], palette.sand[1], palette.land[0], palette.land[1]].join("~");
     const claimsKey = [
       view.config.terrainSeed,
       view.config.claimSizeM,
@@ -444,12 +463,18 @@ export class SimplayzEngine {
       view.claims.map((c) => `${c.id}:${c.buildings.length}:${c.status}:${c.ownerId ?? "n"}`).join(","),
     ].join("|");
     this.view = view;
-    this.relief = view.config.reliefScale;
     this.seed = view.config.terrainSeed;
 
     if (sectorKey !== this.sectorKey || first) {
       this.sectorKey = sectorKey;
+      this.map = palette;
+      this.paletteKey = paletteKey;
       this.rebuildSector();
+    } else if (paletteKey !== this.paletteKey) {
+      // same terrain, new colours — repaint instead of re-streaming
+      this.paletteKey = paletteKey;
+      this.map = palette;
+      this.repaintSector(palette);
     }
     if (claimsKey === this.viewKey && !first) {
       this.touchOverlay(view);
@@ -1040,46 +1065,58 @@ export class SimplayzEngine {
     this.camera.lookAt(this.camRig.target);
   }
 
+  /**
+   * 1.0.0 atmosphere: deliberately minimal.
+   * No fog, no sun-coloured sky, no water shimmer — a flat map should read
+   * like paper, not like dusk. What remains is a soft day/night exposure
+   * shift (so the SUN slider still does something), theme-tinted sky bands
+   * and the per-frame HUD animation state.
+   */
   private updateAtmosphere(time: number) {
     const view = this.view;
     const tod = view?.timeOfDay ?? 17.5;
     const elev = Math.sin(((tod - 6) / 12) * Math.PI);
-    const az = ((tod - 12) / 24) * Math.PI * 2;
     this.nightFactor = THREE.MathUtils.clamp(1 - Math.max(0, elev) * 3.2, 0, 1);
+
+    // keep the light rig consistent for structures (they are lambert-lit)
+    const az = ((tod - 12) / 24) * Math.PI * 2;
     const sunDist = 1200;
-    this.sun.position.set(Math.cos(az) * sunDist, Math.max(80, elev * sunDist), Math.sin(az) * sunDist);
+    this.sun.position.set(Math.cos(az) * sunDist, Math.max(140, elev * sunDist), Math.sin(az) * sunDist);
     this.sun.target.position.set(this.camRig.target.x, 0, this.camRig.target.z);
     this.sun.target.updateMatrixWorld();
-    this.sun.intensity = 0.25 + Math.max(0, elev) * 1.7;
-    this.sun.color.set(elev < 0.25 ? "#ffb877" : "#fff3dd");
-    this.hemi.intensity = 0.18 + Math.max(0, elev) * 0.5;
+    this.sun.intensity = 0.55 + Math.max(0, elev) * 1.15;
+    this.sun.color.set("#ffffff");
+    this.hemi.intensity = 0.45 + Math.max(0, elev) * 0.35;
+
+    // a flat map is brightest at noon and dims gently after dark
+    const exposure = 0.92 + Math.max(0, elev) * 0.16 - this.nightFactor * 0.22;
+    this.renderer.toneMappingExposure = THREE.MathUtils.lerp(this.renderer.toneMappingExposure, exposure, 0.08);
+
+    // sky = two theme-derived bands, sampled from the active palette so the
+    // horizon always belongs to the current map (never a literal blue)
+    const palette = this.map;
+    const top = new THREE.Color(palette.water[0]).multiplyScalar(this.nightFactor > 0.5 ? 0.42 : 0.72);
+    const bottom = new THREE.Color(palette.water[1]).multiplyScalar(this.nightFactor > 0.5 ? 0.3 : 0.55).lerp(new THREE.Color(palette.sand[1]), 0.28);
     const sky = this.sky.material as THREE.ShaderMaterial;
-    const dayTop = new THREE.Color("#2b6ea8");
-    const duskTop = new THREE.Color("#16324f");
-    const nightTop = new THREE.Color("#040a14");
-    const top = elev > 0.28 ? dayTop : elev > -0.05 ? duskTop.clone().lerp(dayTop, Math.max(0, elev / 0.33)) : nightTop.clone().lerp(duskTop, Math.max(0, (elev + 0.28) / 0.23));
-    sky.uniforms.top.value.copy(top);
-    const bottom = elev > 0.2 ? new THREE.Color("#b9d7e8") : elev > -0.05 ? new THREE.Color("#e8a26a") : new THREE.Color("#0a1725");
-    sky.uniforms.bottom.value.copy(bottom);
-    (this.stars.material as THREE.PointsMaterial).opacity = this.nightFactor * 0.9;
+    sky.uniforms.top.value.lerp(top, 0.08);
+    sky.uniforms.bottom.value.lerp(bottom, 0.08);
+    (this.stars.material as THREE.PointsMaterial).opacity = this.nightFactor * 0.55;
     this.sky.position.copy(this.camera.position);
     this.stars.position.copy(this.camera.position);
-    this.scene.fog = this.scene.fog ?? new THREE.Fog(0x0a1a24, 900, 4200);
-    const fog = this.scene.fog as THREE.Fog;
-    fog.color.copy(bottom).lerp(top, 0.4);
-    fog.near = this.mode === "bird" || this.mode === "build" ? 1400 : 60;
-    fog.far = this.mode === "bird" || this.mode === "build" ? 5200 : 900;
-    this.renderer.setClearColor(fog.color, 1);
-    this.water.position.set(this.camRig.target.x, 0.35 + Math.sin(time * 0.6) * 0.12, this.camRig.target.z);
-    (this.water.material as THREE.MeshPhongMaterial).opacity = 0.6 + Math.sin(time * 0.8) * 0.06;
+
+    // flat cartography: no haze, and a clear colour that matches the void token
+    if (this.scene.fog) this.scene.fog = null;
+    this.renderer.setClearColor(bottom, 1);
+
     this.gridHelper.position.set(this.camRig.target.x, 1.5, this.camRig.target.z);
 
+    // gameplay overlays keep their animation
     for (const obj of this.claimGroup.children) {
       if (obj.userData.kind !== "fill") continue;
       const mesh = obj as THREE.Mesh;
       const mat = mesh.material as THREE.MeshBasicMaterial;
       const active = obj.userData.claimId === this.view?.activeClaimId;
-      mat.opacity = (active ? 0.16 : 0.07) + Math.sin(time * 1.6) * 0.025;
+      mat.opacity = (active ? 0.2 : 0.1) + Math.sin(time * 1.6) * 0.025;
       mesh.scale.setScalar(1 + (active ? Math.sin(time * 2) * 0.004 : 0));
     }
     // emissive windows wake up at night
@@ -1166,9 +1203,10 @@ export default function WorldViewport({ onTelemetry }: { onTelemetry?: (t: Telem
   const rotation = useWorld((s) => s.rotation);
   const tool = useWorld((s) => s.tool);
   const timeOfDay = useWorld((s) => s.timeOfDay);
-  const showTiles = useWorld((s) => s.showTiles);
   const pilotId = useWorld((s) => s.pilotId);
   const center = useWorld((s) => s.center);
+  const theme = useTheme((s) => s.theme);
+  const mapStyle = useTheme((s) => s.mapStyle);
   const mounted = useRef(false);
 
   useEffect(() => {
@@ -1203,8 +1241,8 @@ export default function WorldViewport({ onTelemetry }: { onTelemetry?: (t: Telem
 
   useEffect(() => {
     if (!mounted.current) return;
-    engineRef.current?.update({ claims, config, activeClaimId, mode, selectedKind, rotation, tool, timeOfDay, showTiles, pilotId });
-  }, [claims, config, activeClaimId, mode, selectedKind, rotation, tool, timeOfDay, showTiles, pilotId]);
+    engineRef.current?.update({ claims, config, activeClaimId, mode, selectedKind, rotation, tool, timeOfDay, pilotId, theme, mapStyle });
+  }, [claims, config, activeClaimId, mode, selectedKind, rotation, tool, timeOfDay, pilotId, theme, mapStyle]);
 
   return <div ref={hostRef} className="absolute inset-0 cursor-crosshair" />;
 }

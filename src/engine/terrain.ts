@@ -363,7 +363,9 @@ export function quickSample(lng: number, lat: number, seed: number) {
   const forest = Math.max(0, Math.min(1, sstep(0.44, 0.7, forestNoise) * sstep(0, 7, h) * sstep(430, 250, h) * (0.55 + 0.75 * wet)));
   const cityPull = fbm(X * 0.0012, Y * 0.0012, seed + 404, 3);
   const urban = Math.max(0, Math.min(1, sstep(0.6, 0.79, cityPull) * (0.3 + 0.7 * (1 - sstep(6, 22, slopeDeg))) * sstep(-3, 9, h)));
-  return { h, biome: classify(h, wet, temp, slopeDeg, urban, forest), wet, urban, river };
+  // `forest` is already evaluated for the classifier — hand it back so the
+  // flat map painter does not need a second, heavier sample.
+  return { h, biome: classify(h, wet, temp, slopeDeg, urban, forest), wet, urban, river, forest };
 }
 
 /** deterministic unit generator from integer-ish inputs (no Math.random in logic) */

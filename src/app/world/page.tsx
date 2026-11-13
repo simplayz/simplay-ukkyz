@@ -4,7 +4,8 @@ import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useWorld } from "./store";
-import { AdvisorAgent, AssaultReport, BuildPalette, ConfigModal, EventTicker, HelpModal, IntelModal, Minimap, OnboardModal, ParcelInspector, PilotConsole, Toasts, TopBar } from "./panels";
+import { useTheme } from "../theme-store";
+import { AdvisorAgent, AssaultReport, BuildPalette, ConfigModal, EventTicker, HelpModal, IntelModal, Minimap, OnboardModal, ParcelInspector, PilotConsole, ThemeModal, Toasts, TopBar } from "./panels";
 import type { Telemetry } from "./viewport";
 
 const WorldViewport = dynamic(() => import("./viewport").then((m) => m.default), {
@@ -29,6 +30,7 @@ export default function WorldPage() {
   const [telemetry, setTelemetry] = useState<Telemetry>({ fps: 0, draws: 0, tris: 0, tiles: "0/9", alt: 0, speed: 0 });
 
   useEffect(() => {
+    useTheme.getState().hydrate();
     void boot();
   }, [boot]);
 
@@ -44,7 +46,7 @@ export default function WorldPage() {
   const tour = mode === "fps" || mode === "tps";
 
   return (
-    <main className="relative h-screen w-screen overflow-hidden bg-void text-slate-200 select-none">
+    <main className="relative h-screen w-screen overflow-hidden bg-void text-ink select-none">
       <div className="absolute inset-0">
         <WorldViewport onTelemetry={setTelemetry} />
       </div>
@@ -78,9 +80,9 @@ export default function WorldPage() {
             <BuildPalette />
             <ParcelInspector />
             {hover?.cell && activeClaim && (
-              <div className="panel pointer-events-auto px-2 py-1 text-[10px] text-slate-400">
+              <div className="panel pointer-events-auto px-2 py-1 text-[10px] text-dim">
                 cell <span className="text-mint">{hover.cell.x}</span>/<span className="text-mint">{hover.cell.y}</span> · parcel{" "}
-                <span className="text-slate-200">{activeClaim.name}</span> {player ? "" : "· register to build"}
+                <span className="text-ink">{activeClaim.name}</span> {player ? "" : "· register to build"}
               </div>
             )}
           </div>
@@ -90,12 +92,13 @@ export default function WorldPage() {
       </div>
 
       {tour && (
-        <div className="panel pointer-events-auto absolute bottom-16 left-1/2 z-30 -translate-x-1/2 px-3 py-1.5 text-[10.5px] text-slate-400">
+        <div className="panel pointer-events-auto absolute bottom-16 left-1/2 z-30 -translate-x-1/2 px-3 py-1.5 text-[10.5px] text-dim">
           <span className="text-mint">{mode === "fps" ? "FIRST PERSON" : "THIRD PERSON"}</span> · click the world to capture the mouse ·
           WASD move · SHIFT sprint · SPACE hop · ESC release
         </div>
       )}
 
+      <ThemeModal />
       <Toasts />
       <AssaultReport />
       <OnboardModal />
@@ -105,7 +108,7 @@ export default function WorldPage() {
 
       <Link
         href="/"
-        className="panel absolute left-1/2 bottom-1.5 z-30 -translate-x-1/2 px-2 py-0.5 text-[9px] uppercase tracking-[0.3em] text-slate-600 hover:text-mint"
+        className="panel absolute left-1/2 bottom-1.5 z-30 -translate-x-1/2 px-2 py-0.5 text-[9px] uppercase tracking-[0.3em] text-faint hover:text-mint"
       >
         simplayz index
       </Link>

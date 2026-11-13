@@ -3,8 +3,9 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { worldConfig } from "@/db/schema";
 import { DEFAULT_CONFIG, ENGINE_IDENTITY } from "@/lib/server";
-import { BIOMES } from "@/engine/terrain";
 import { BUILD_KINDS } from "@/engine/buildings";
+import { CARTO_PALETTE, classifyLand, swatches } from "@/engine/palette";
+import { ThemeHost } from "./theme-host";
 
 export const dynamic = "force-dynamic";
 
@@ -61,19 +62,28 @@ export default async function HomePage() {
     ["surveys cached", nSurveys],
   ];
 
+  const bands = swatches(CARTO_PALETTE);
+  const legend: { key: string; label: string; from: string; to: string; note: string }[] = [
+    { key: "water", label: "sea · lake · river", from: CARTO_PALETTE.water[0], to: CARTO_PALETTE.water[1], note: "blue gradient · deep → shallow" },
+    { key: "sand", label: "beach · sandflat · marsh", from: CARTO_PALETTE.sand[0], to: CARTO_PALETTE.sand[1], note: "grey gradient · wet → dry" },
+    { key: "land", label: "plains · forest · mountain", from: CARTO_PALETTE.land[0], to: CARTO_PALETTE.land[1], note: "green gradient · lowland → summit" },
+  ];
+
   return (
-    <div className="min-h-screen bg-void text-slate-300">
+    <ThemeHost>
+    <div className="min-h-screen bg-void text-dim">
       <div className="relative overflow-hidden border-b border-line">
-        <img src="/images/sector-hero.jpg" alt="" className="absolute inset-0 h-full w-full object-cover opacity-30" />
-        <div className="absolute inset-0 grid-bg opacity-25" />
-        <div className="absolute inset-0 bg-gradient-to-b from-void/50 via-void/70 to-void" />
+        <div className="absolute inset-0 theme-glow opacity-70" />
+        <div className="absolute inset-0 grid-bg opacity-30" />
+        <div className="absolute inset-0 bg-gradient-to-b from-void/40 via-void/65 to-void" />
 
         <header className="relative z-10 mx-auto flex max-w-6xl items-center gap-4 px-6 py-5">
           <div className="flex items-center gap-2.5">
             <div className="relative h-7 w-7 border border-mint/70">
               <div className="absolute inset-[4px] bg-mint" style={{ clipPath: "polygon(50% 0,100% 100%,0 100%)" }} />
             </div>
-            <span className="text-[15px] font-semibold tracking-[0.42em] text-slate-100">SIMPLAYZ</span>
+            <span className="text-[15px] font-semibold tracking-[0.42em] text-ink">SIMPLAYZ</span>
+            <span className="chip px-1.5 py-0.5 text-[9px] tracking-[0.18em] text-mint">v1.0.0</span>
           </div>
           <nav className="ml-auto flex items-center gap-2 text-[11px]">
             <Link href="/world" className="btn px-3 py-2">ENTER SECTOR</Link>
@@ -86,25 +96,26 @@ export default async function HomePage() {
           <div>
             <div className="label mb-4 flex items-center gap-2">
               <span className="h-1.5 w-1.5 anim-blink rounded-full bg-mint" />
-              {ENGINE_IDENTITY.name} · {ENGINE_IDENTITY.build} · live
+              {ENGINE_IDENTITY.name} · v1.0.0 · live
             </div>
-            <h1 className="text-[clamp(2.1rem,5.6vw,4.1rem)] font-semibold leading-[0.98] tracking-tight text-slate-50">
-              Own one square kilometre
+            <h1 className="text-[clamp(2.1rem,5.6vw,4.1rem)] font-semibold leading-[0.98] tracking-tight text-ink">
+              A persistent, browser-based
               <br />
-              of a world that is
-              <span className="text-mint"> invented</span> under you.
+              <span className="text-mint">sector simulation</span>
+              <br />
+              drawn flat.
             </h1>
-            <p className="mt-5 max-w-xl text-[13px] leading-relaxed text-slate-400">
-              Simplayz streams real OpenStreetMap raster at zoom {config.tileZoom}, then re-hallucinates the surface: relief, drainage, soil,
-              canopy and legacy sprawl are synthesised from a seeded field model, stored in Postgres and handed to a three.js sector viewer.
-              Lock {config.claimSizeM} m of ground around your own coordinates, raise dwellings, fields, fabs and megastructures on a{" "}
-              {config.gridCells}×{config.gridCells} grid, then walk what you built in first or third person. Nobody can touch your parcel for{" "}
-              {config.lockHours} hours. After that, it is target practice.
+            <p className="mt-5 max-w-xl text-[13px] leading-relaxed text-dim">
+              Simplayz 1.0.0 renders the whole sector as a flat cartographic map: mountain, beach and sea are told apart by hue instead of
+              shading. A seeded terrain engine still decides every cell underneath — drainage, soil, canopy and legacy sprawl are synthesised,
+              stored in Postgres and surveyed by the same pure functions the server runs. Lock {config.claimSizeM} m of ground around your own
+              coordinates, raise structures on a {config.gridCells}×{config.gridCells} grid, and keep the parcel for {config.lockHours} hours
+              before anyone may contest it. Four glass themes, one flat world.
             </p>
             <div className="mt-7 flex flex-wrap items-center gap-2">
               <Link href="/world" className="btn btn-hot px-5 py-3 text-[12px]">CLAIM MY FIRST PARCEL →</Link>
               <Link href="/world" className="btn px-4 py-3">FLY THE SECTOR</Link>
-              <span className="chip px-3 py-2 text-[10.5px] text-slate-500">{owned} parcel(s) held on this instance</span>
+              <span className="chip px-3 py-2 text-[10.5px] text-faint">{owned} parcel(s) held on this instance</span>
             </div>
           </div>
 
@@ -112,9 +123,9 @@ export default async function HomePage() {
             <div className="label mb-3">instance ledger</div>
             <div className="grid grid-cols-2 gap-2">
               {stats.map(([label, value]) => (
-                <div key={label} className="border border-line bg-[#070d12]/70 p-3">
+                <div key={label} className="border border-line bg-glass/70 p-3">
                   <div className="label">{label}</div>
-                  <div className="mt-1 text-[22px] leading-none tabular-nums text-slate-100">{value.toLocaleString()}</div>
+                  <div className="mt-1 text-[22px] leading-none tabular-nums text-ink">{value.toLocaleString()}</div>
                 </div>
               ))}
               <div className="border border-mint/30 bg-mint/[0.06] p-3">
@@ -135,8 +146,8 @@ export default async function HomePage() {
                 ["assault_enabled", String(config.assaultEnabled)],
               ].map(([k, v]) => (
                 <div key={k} className="flex items-baseline justify-between gap-3 border-b border-line/60 pb-1">
-                  <dt className="text-slate-500">{k}</dt>
-                  <dd className="tabular-nums text-slate-200">{v}</dd>
+                  <dt className="text-faint">{k}</dt>
+                  <dd className="tabular-nums text-ink">{v}</dd>
                 </div>
               ))}
             </dl>
@@ -172,8 +183,8 @@ export default async function HomePage() {
           ].map((s) => (
             <div key={s.n} className="panel anim-sweep relative overflow-hidden p-4">
               <div className="text-[10px] tracking-[0.3em] text-mint">{s.n}</div>
-              <h3 className="mt-2 text-[14px] text-slate-100">{s.t}</h3>
-              <p className="mt-2 text-[11px] leading-relaxed text-slate-400">{s.d}</p>
+              <h3 className="mt-2 text-[14px] text-ink">{s.t}</h3>
+              <p className="mt-2 text-[11px] leading-relaxed text-dim">{s.d}</p>
             </div>
           ))}
         </div>
@@ -182,35 +193,52 @@ export default async function HomePage() {
       <section className="border-y border-line bg-hull/60">
         <div className="mx-auto grid max-w-6xl gap-8 px-6 py-14 lg:grid-cols-[1fr_1.1fr]">
           <div>
-            <div className="label mb-3">biome classes the engine can emit</div>
-            <div className="grid grid-cols-2 gap-1.5">
-              {BIOMES.map((b) => (
-                <div key={b.key} className="flex items-center gap-2 border border-line bg-[#070d12]/60 px-2 py-1.5">
-                  <span className="h-3 w-3 shrink-0" style={{ background: b.color, boxShadow: `0 0 10px ${b.color}66` }} />
-                  <div className="min-w-0">
-                    <div className="truncate text-[10.5px] text-slate-200">{b.name}</div>
-                    <div className="text-[9px] text-slate-500">
-                      soil {b.fertility.toFixed(2)} · cover {b.cover.toFixed(2)} · cost ×{b.costMod.toFixed(2)}
-                      {b.buildable ? "" : " · NO BUILD"}
-                    </div>
+            <div className="label mb-3">flat map legend · hue is the data</div>
+            <div className="space-y-2">
+              {legend.map((l) => (
+                <div key={l.key} className="panel p-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-ink">{l.label}</span>
+                    <span className="text-[9px] uppercase tracking-[0.16em] text-faint">{l.key}</span>
                   </div>
+                  <div className="mt-1.5 h-7 w-full border border-line/70" style={{ background: `linear-gradient(90deg, ${l.from}, ${l.to})` }} />
+                  <div className="mt-1 text-[9.5px] text-faint">{l.note}</div>
                 </div>
               ))}
             </div>
+            <p className="mt-3 text-[10.5px] leading-relaxed text-dim">
+              No relief exaggeration, no raster, no fog: the sector is drawn the way a cartographer would draw it.
+              Elevation still drives gameplay — build cost, slope refusals and the survey profile are unchanged.
+            </p>
           </div>
           <div>
-            <div className="label mb-3">build vocabulary</div>
+            <div className="label mb-3">glass themes · selectable at runtime</div>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                ["dark purplish", "indigo ground · orchid accents"],
+                ["light purplish", "paper-lilac ground · plum type"],
+                ["custom colour", "your ground + your accent"],
+                ["random high-contrast", "readability-checked rolls"],
+              ].map(([name, note]) => (
+                <div key={name} className="panel anim-floaty p-2.5">
+                  <div className="text-[11px] text-ink">{name}</div>
+                  <div className="mt-0.5 text-[9.5px] text-faint">{note}</div>
+                </div>
+              ))}
+            </div>
+            <div className="label mb-3 mt-6">build vocabulary</div>
             <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-              {BUILD_KINDS.map((k) => (
-                <div key={k.key} className="border border-line bg-[#070d12]/60 p-2">
-                  <span className="block h-6 w-full" style={{ background: `linear-gradient(150deg, ${k.color}, ${k.color}22)` }} />
-                  <div className="mt-1.5 truncate text-[10.5px] text-slate-200">{k.name}</div>
-                  <div className="text-[9px] text-slate-500">
+              {BUILD_KINDS.slice(0, 9).map((k) => (
+                <div key={k.key} className="pane p-2">
+                  <span className="block h-5 w-full" style={{ background: `linear-gradient(150deg, ${k.color}, ${k.color}22)` }} />
+                  <div className="mt-1 truncate text-[10px] text-ink">{k.name}</div>
+                  <div className="text-[9px] text-faint">
                     {k.footprint[0]}×{k.footprint[1]} · {k.cost} cr
                   </div>
                 </div>
               ))}
             </div>
+            <Link href="/world" className="btn mt-3 inline-block px-3 py-2 text-[10px]">OPEN THE FLAT MAP →</Link>
           </div>
         </div>
       </section>
@@ -218,8 +246,8 @@ export default async function HomePage() {
       <section id="rules" className="mx-auto max-w-6xl px-6 py-16">
         <div className="grid gap-8 lg:grid-cols-[1.1fr_1fr]">
           <div>
-            <h2 className="text-[clamp(1.5rem,3vw,2.2rem)] leading-tight text-slate-100">Sovereignty, expressed as a database row.</h2>
-            <p className="mt-3 text-[12px] leading-relaxed text-slate-400">
+            <h2 className="text-[clamp(1.5rem,3vw,2.2rem)] leading-tight text-ink">Sovereignty, expressed as a database row.</h2>
+            <p className="mt-3 text-[12px] leading-relaxed text-dim">
               There is no hidden balance file. Parcel edge, lock window, claim ceiling, tile zoom, relief exaggeration, economy cadence and the
               terrain seed are one UPDATE away, and the client re-reads them on the next snapshot. Every claim you lose can be traced back to a
               row, a survey and a seeded resolution log.
@@ -234,14 +262,14 @@ export default async function HomePage() {
               ].map(([k, v]) => (
                 <li key={k} className="flex gap-3 border-b border-line/60 pb-2">
                   <span className="w-16 shrink-0 text-[9.5px] uppercase tracking-[0.2em] text-mint">{k}</span>
-                  <span className="text-slate-400">{v}</span>
+                  <span className="text-dim">{v}</span>
                 </li>
               ))}
             </ul>
           </div>
           <div className="panel relative overflow-hidden p-5">
             <div className="label mb-2">resolution sample</div>
-            <pre className="overflow-x-auto text-[10.5px] leading-relaxed text-slate-400">
+            <pre className="overflow-x-auto text-[10.5px] leading-relaxed text-dim">
 {`POST /api/claims { action: "assault", claimId }
 
   guard      lock_until <= now()        -> else 409 SEALED
@@ -260,9 +288,9 @@ export default async function HomePage() {
                 ["float", `${config.startCredits} cr`],
                 ["relief", `×${config.reliefScale}`],
               ].map(([k, v]) => (
-                <div key={k} className="border border-line bg-[#070d12]/70 p-2">
+                <div key={k} className="border border-line bg-glass/70 p-2">
                   <div className="label">{k}</div>
-                  <div className="text-[13px] text-slate-100">{v}</div>
+                  <div className="text-[13px] text-ink">{v}</div>
                 </div>
               ))}
             </div>
@@ -271,12 +299,13 @@ export default async function HomePage() {
       </section>
 
       <footer className="border-t border-line px-6 py-8">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-4 text-[10px] uppercase tracking-[0.22em] text-slate-600">
-          <span className="text-slate-500">Simplayz sector OS</span>
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-4 text-[10px] uppercase tracking-[0.22em] text-faint">
+          <span className="text-faint">Simplayz 1.0.0 · persistent sector simulation</span>
           <span>Next.js App Router · three.js · Drizzle · Postgres</span>
-          <span className="ml-auto">map data © OpenStreetMap contributors · terrain invented locally</span>
+          <span className="ml-auto">flat cartography drawn from a seeded terrain engine</span>
         </div>
       </footer>
     </div>
+    </ThemeHost>
   );
 }

@@ -1,16 +1,31 @@
-# Simplayz
+# Simplayz — v1.0.0
 
-A persistent, browser-based sector simulation. Pilots stream real OpenStreetMap raster at zoom 15, but the
-surface is re-invented by a seeded procedural terrain engine: relief, drainage, soil, canopy and legacy urban
-sprawl are synthesised, quantised into a gameplay grid, stored in Postgres, and rendered in a three.js viewer.
-Players lock 1 km² parcels around real coordinates, build on a 48×48 grid, accrue credits on an economy tick,
-and assault each other's parcels after the seal expires.
+**A persistent, browser-based sector simulation.**
+
+Pilots lock 1 km² parcels of real coordinates, raise structures on a 48×48 grid, earn credits on an economy tick,
+and assault each other's parcels once the seal expires. The world is rendered as a **flat cartographic map**: no
+relief shading, no raster — mountain, beach and sea are told apart by hue (green, grey and blue gradients), while a
+seeded procedural terrain engine still decides every cell underneath.
+
+The interface is **glass-morphism** with four user-selectable themes (dark purplish, light purplish, custom colours,
+random high-contrast), applied live and persisted per browser.
 
 Everything that can be tuned is a row in `world_config`. Nothing about the balance lives in a file.
 
 - **Stack:** Next.js 16 (App Router, Turbopack) · React 19 · TypeScript (strict) · Tailwind CSS 4 · three.js · zustand · Drizzle ORM · PostgreSQL
-- **Source size:** ~5.3k lines across 24 TypeScript files
+- **Source size:** ~6.6k lines across 28 TypeScript files
 - **Working with an AI agent?** Read [`AGENT_BRIEF.md`](./AGENT_BRIEF.md) — it contains copy-paste prompts.
+
+## What 1.0.0 changed
+
+| Area | 1.0.0 behaviour |
+| --- | --- |
+| **Rendering** | Flat, unlit cartography. The OSM raster drape, relief shading, fog, water plane and sun-coloured sky are gone. Elevation is encoded as hue, not light |
+| **Map palette** | `src/engine/palette.ts` — three ramps: sea/lake/river **blue**, beach/sand/marsh **grey**, land/mountain **green**. Two map styles: `cartographic` (fixed colour-as-data) or `themed` (ramps follow the UI theme) |
+| **Themes** | `src/engine/themes.ts` — `cartographer`, `violet` (dark purplish), `lilac` (light purplish), `custom` (pilot-derived), `chaos` (random, readability-checked). Pick them from **APPEARANCE** in the world HUD |
+| **Glass UI** | Every surface is one `.panel` utility (translucent tint + `backdrop-filter` + hairline edge). Tokens resolve at runtime, so a theme change repaints the whole app without a reload |
+| **No-flash boot** | The resolved custom properties are persisted and replayed by an inline script in `layout.tsx` before React mounts |
+| **Removed** | The `RASTER` toggle (there is no raster), the tile texture cache in the viewer, relief-draped claim fills |
 
 ---
 
@@ -23,8 +38,9 @@ Simplayz is one app with three layers that must agree:
    authoritative survey). Same seed → same planet, on both tiers, with no synchronisation.
 2. **A world ledger** (Postgres via Drizzle) — players, claims ("parcels"), buildings, cached surveys, cached map
    tiles, and an event feed. `world_config` is a single row that retunes the simulation live.
-3. **A sector viewer** (`/world`) — a three.js scene with four camera modes (bird, build, first-person, third-person)
-   wrapped in a HUD made of React panels.
+3. **A sector viewer** (`/world`) — a three.js scene rendered as a **flat cartographic map** (see §8), with four
+   camera modes (bird, build, first-person, third-person) wrapped in a **glass-morphism** HUD made of React panels,
+   skinnable with four user-selectable themes.
 
 The core loop:
 
@@ -161,6 +177,11 @@ Read this table instead of scanning the tree. ~line counts are rough and only in
 | `src/engine/terrain.ts` | Noise, height field, climate/forest/urban signals, `classify()`, 14 biomes, `surveyParcel()`, `quickSample()`, `hashSeed()` |
 | `src/engine/buildings.ts` | `BuildKind` interface + 18-entry `BUILD_KINDS` catalogue, rotation/footprint/height/cost helpers |
 | `src/engine/simulation.ts` | Placement validation, occupancy, road service, `computeTotals()` economy, `resolveAssault()` combat, `lockCountdown()` |
+| `src/engine/palette.ts` | **Flat-map cartography**: `classifyLand()`, the three ramps, `paintFlatColor()`, colour maths (`hexToRgb`, `rgbToHsl`, `ensureContrast`, `contrastRatio`), `MapPalette` |
+| `src/engine/themes.ts` | **Theme system**: the five themes, `deriveCustomTheme()`, `randomTheme()` + `isReadableTheme()` acceptance bar, `themeCssVars()` |
+| `src/lib/theme.ts` | Browser edge for themes: persist/restore the choice, write custom properties to `<html>`, set `data-scheme` |
+| `src/app/theme-store.ts` | zustand theme store (`useTheme`): `setTheme`, `setCustom`, `rerollChaos`, `setMapStyle`, `hydrate` |
+| `src/app/theme-host.tsx` | Client leaf that hydrates the theme on the otherwise server-rendered landing page |
 | `drizzle.config.ts` | drizzle-kit config (schema path, Postgres dialect, `POSTGRES_URL`) |
 | `next.config.ts` | Empty Next config (the place for headers, redirects, image domains) |
 | `eslint.config.mjs` | Flat config; `next/core-web-vitals` + generated-folder ignores |
@@ -275,55 +296,109 @@ repair **400 cr**, upgrade max tier **5**, upgrade cost `round(cost × 0.7 × 1.
 
 ## 8. UI/UX system
 
-### Design tokens (`src/app/globals.css`, Tailwind v4 `@theme`)
+### Rendering model: flat cartography
 
-| Token | Value | Use |
+The 1.0.0 viewer draws the world as an unlit map. `buildOneTile()` samples the terrain with the cheap
+`quickSample()` and converts each vertex straight into a colour with `paintFlatColor()`:
+
+| Band | Gradient | Source signal |
 | --- | --- | --- |
-| `void` | `#04070a` | page background |
-| `hull` | `#090f14` | alternate section background |
-| `panel` | `#0c141b` | panel base (see utility) |
-| `line` | `#1b2b36` | borders, hairlines |
-| `mint` | `#7df0c0` | primary accent / positive |
-| `amber` | `#ffb454` | hot actions, warnings |
-| `ice` | `#68b7ff` | informational |
-| `rose` | `#f47ba8` | negative |
+| **Water** — sea, lake, river | deep blue `#052a4e` → shallow cyan `#4bb8f0` | `h < 1.5`, or the classifier says abyss/shelf, or `h < 8 && wet > 0.66` |
+| **Sand** — beach, sandflat, marsh | wet grey `#57524a` → dry light grey `#d3cdbf` | `h < 7.5`, biomes 2–3, or `h < 14 && wet > 0.62` |
+| **Land** — plains, forest, mountain | lowland green `#1b7a43` → summit pale green `#e9f6d8` | everything else; lighter with elevation, slightly darker under canopy/urban |
 
-Utilities: `panel` (glass background + border + inset highlight), `label` (10 px uppercase tracked caption),
-`hairline` (fading divider), `grid-bg` (blueprint grid), `scan` (CRT scanlines).
-Component classes: `.btn`, `.btn-on` (selected), `.btn-hot` (primary/amber), `.chip`.
-Animations: `anim-sweep`, `anim-blink`, `anim-rise`, `anim-ticker`.
-Inputs (`text`, `number`, `select`, `textarea`, `range`) are styled globally — use them, don't restyle per form.
+Consequences worth knowing:
 
-Rule of thumb: use tokens (`text-mint`, `border-line`, `bg-void/70`) and the utilities above. Literal hex values in
-TSX are reserved for data-driven colors that come from the engine catalogues (`biome.color`, `kind.color`,
-`player.color`).
+- **Geometry is flat** (`y = 0`) and materials are `MeshBasicMaterial` — no sun, no shadows on terrain, no fog,
+  no separate water plane. `localGround()` therefore returns `0`; the analytic relief is still used by the
+  survey/economy maths, just not drawn.
+- **Repaint, don't rebuild.** `applyView()` keeps a `paletteKey`; when only the theme changes it calls
+  `repaintSector()` and rewrites the colour attribute in place. Terrain only rebuilds when `terrainSeed` changes.
+- **Two map styles.** `cartographic` keeps hue = data (recommended: the map stays legible under any UI theme).
+  `themed` moves the ramps into the current theme via `themedMap()`.
+- The **minimap** uses the same painter, so the HUD and the 3D view can never disagree about what is water.
+
+### Theme system
+
+Four selectable looks (plus the original), all rendered as glass:
+
+| Theme | id | Surface | Notes |
+| --- | --- | --- | --- |
+| Dark purplish | `violet` | `#0e0a1a` indigo | orchid + lilac accents, dark glass |
+| Light purplish | `lilac` | `#efe9fa` paper lilac | plum type, deeper saturated accents, light glass |
+| Custom colour | `custom` | pilot's ground | accent is contrast-corrected; scheme is inferred from ground luminance |
+| Random high-contrast | `chaos` | randomised | two well-separated anchor hues; rejected and re-rolled until `isReadableTheme()` passes |
+| Cartographer | `cartographer` | `#04070a` void | the original mint HUD, still the default |
+
+How it works, end to end:
+
+1. `src/engine/themes.ts` describes a theme as 13 flat colour tokens (`void`, `hull`, `glass`, `panel`, `line`,
+   `ink`, `dim`, `faint`, `mint`, `amber`, `ice`, `rose`, `onAccent`) plus `glow`, `map` and `scheme`.
+2. `themeCssVars()` turns that into `--color-*` custom properties.
+3. `applyThemeVars()` (`src/lib/theme.ts`) writes them to `<html>` and sets `data-theme` / `data-scheme`.
+4. `globals.css` maps them into Tailwind with `@theme inline`, so components keep using plain classes.
+5. `src/app/theme-store.ts` owns the choice, persists it, and re-rolls `chaos`.
+6. `layout.tsx` replays the persisted properties in an inline script **before** React mounts (no theme flash).
+
+**Rule:** never hard-code a colour in a component. Use `bg-void`, `text-ink`, `text-dim`, `text-faint`,
+`border-line`, `text-mint`, `text-amber`, `text-ice`, `text-rose`. Literal hex is only allowed for data
+colours coming from the engine (`kind.color`, `player.color`) or inside a theme definition.
+
+### Design tokens (`src/app/globals.css`)
+
+| Token | Role | Dark default | Light default |
+| --- | --- | --- | --- |
+| `void` | page background | `#04070a` | theme ground |
+| `hull` | alternate band | `#090f14` | lifted ground |
+| `glass` | glass pane tint | `#101a21` | ink-tinted |
+| `panel` | opaque pane | `#0b1319` | lifted |
+| `line` | borders / hairlines | `#1b2b36` | mixed ink |
+| `ink` | primary text | `#dbf1f7` | `#241a3d` (lilac) |
+| `dim` | secondary text | `#9dbdcb` | `#5b4a80` |
+| `faint` | captions / telemetry | `#6c8794` | `#7d6ca3` |
+| `mint` | primary accent | `#7df0c0` | `#6b2fd1` |
+| `amber` | hot / warning | `#ffb454` | `#a34c00` |
+| `ice` | informational | `#68b7ff` | `#1f5fae` |
+| `rose` | negative | `#f47ba8` | `#a82060` |
+| `onAccent` | text on accent fills | `#04070a` | `#ffffff` |
+
+Glass geometry is scheme-driven: `--sim-glass-alpha`, `--sim-glass-alpha-soft`, `--sim-blur`,
+`--sim-highlight` and `--sim-noise` are re-tuned by `:root[data-scheme="light"]`. Light themes use a higher
+pane alpha and a stronger blur so text stays readable over a bright map.
+
+Utilities: `panel` (the one glass surface), `pane` (nested card), `tint-mint` / `tint-amber` / `tint-rose` /
+`tint-ice` (shift a panel's hue via `--sim-tint`), `label`, `hairline`, `grid-bg`, `scan`, `theme-glow`
+(the landing-page wash), `anim-sweep`, `anim-blink`, `anim-rise`, `anim-ticker`, `anim-floaty`.
+Component classes: `.btn`, `.btn-on`, `.btn-hot`, `.chip`. Inputs (incl. `input[type=color]` for the custom
+theme) are styled globally — don't restyle them per form.
 
 ### HUD inventory (`src/app/world/panels.tsx`)
 
 | Component | Purpose |
 | --- | --- |
-| `TopBar` | Brand, mode switch (BIRD / BUILD / TOUR·FPS / TOUR·TPS), clock, FPS/draws/tris, day-night slider, tile toggle, panel buttons |
+| `TopBar` | Brand + version, mode switch (BIRD / BUILD / TOUR·FPS / TOUR·TPS), clock, FPS/draws/tris, day-night slider, theme name button, panel buttons |
 | `PilotConsole` | Pilot registration/GPS hook, survey + claim form, parcel list, rapid controls |
 | `BuildPalette` | Category filter, 18 structure cards, tool switch (raise / salvage / inspect), rotation, stat readout |
 | `ParcelInspector` | Selected parcel: owner, totals from `computeTotals`, structure list, upgrade/demolish/relock/abandon |
 | `AdvisorAgent` | Deterministic rule stack ("site agent") that suggests the next build with one-click selection |
-| `Minimap` | Canvas top-down biome render + claim rectangles + click-to-fly |
+| `Minimap` | Canvas top-down **flat-map** render (same palette as the 3D view) + claim rectangles + click-to-fly |
 | `EventTicker` | Scrolling `world_events` feed |
 | `Toasts` | Transient notifications (4 max, 5.2 s) |
 | `OnboardModal` / `ConfigModal` / `IntelModal` / `HelpModal` | Registration, live `world_config` editor, leaderboard/telemetry, controls reference |
+| `ThemeModal` | Appearance picker: the five themes, custom colour inputs, chaos re-roll, map-colour style switch, live legend |
 | `AssaultReport` | Phase-by-phase combat report from the last assault |
 
 Shared primitives in the same file: `Modal` (centered overlay, `wide` variant), `Bar` (labelled meter), `useTick`
-(ticking clock). Panels that need clicks must set `pointer-events-auto` — the HUD overlay itself is
-`pointer-events-none`.
+(ticking clock), `MapPreview` (mini ramp legend) and `ThemeCard` (selectable theme tile).
+Panels that need clicks must set `pointer-events-auto` — the HUD overlay itself is `pointer-events-none`.
 
 ### The 3D viewer (`src/app/world/viewport.tsx`)
 
 - `SimplayzEngine` is a plain imperative class (no React inside). The React wrapper `WorldViewport` instantiates it
   once, forwards store state through `engine.update(view)`, and exposes `focus()`, `teleportLocal()`, `dispose()`.
-- `update()` diffs with two keys: `sectorKey` (seed + relief → rebuild terrain) and `claimsKey`
-  (config + per-claim building counts/status/owner → rebuild claims). **If you add scene data, extend those keys**
-  or the scene will silently not rebuild.
+- `update()` diffs with three keys: `sectorKey` (terrain seed → rebuild tiles), `paletteKey` (the seven ramp
+  stops → repaint tiles in place) and `claimsKey` (config + per-claim building counts/status/owner → rebuild
+  claims). **If you add scene data, extend the matching key** or the scene will silently not update.
 - `EngineCallbacks`: `onHover`, `onPlace`, `onPickBuilding`, `onPickClaim`, `onTelemetry`, `onLeaveTour`.
 - The engine instance is also published on `window.__simplayz`; HUD helpers `engineFocus()` / `engineTeleport()` use
   it.
@@ -352,16 +427,22 @@ Esc release.
    `export const dynamic = "force-dynamic"`.
 6. **Client data only through the store.** Components call store actions; actions use the `api()` helper (which
    adds the pilot header) and then `refresh()`. No `fetch` inside components.
-7. **Styling** uses tokens and shared utilities (§8). A genuinely new color belongs in `@theme`, not in JSX.
-8. **The viewer rebuilds by key.** New scene-affecting fields must be added to `claimsKey`/`sectorKey`.
-   GPU resources created by the engine must be released in `dispose()`.
-9. **Comments:** the codebase uses banner comments (`/* ---- section ---- */`) and explains *why*, not *what*.
+7. **Never hard-code a colour.** Use the theme tokens (`bg-void`, `text-ink`, `text-dim`, `text-faint`,
+   `border-line`, `text-mint`, `text-amber`, `text-ice`, `text-rose`) and the glass utilities. Literal hex belongs in
+   a theme definition (`src/engine/themes.ts`), in the map ramps (`src/engine/palette.ts`), or in data-driven
+   colours from the engine catalogues.
+8. **The viewer rebuilds by key.** New scene-affecting fields must be added to `claimsKey` / `sectorKey` /
+   `paletteKey`. GPU resources created by the engine must be released in `dispose()`.
+9. **New themeable values go through the token map.** A new colour token means: `ThemeColors` in
+   `src/engine/themes.ts`, `THEME_TOKEN_KEYS`, every theme entry, `@theme inline` in `globals.css`.
+   Never read a raw hex from a component.
+10. **Comments:** the codebase uses banner comments (`/* ---- section ---- */`) and explains *why*, not *what*.
    Match that style.
-10. **Next.js 16 details:** route `params` is a `Promise` (`await ctx.params` — copy the tiles route); client
+11. **Next.js 16 details:** route `params` is a `Promise` (`await ctx.params` — copy the tiles route); client
     components start with `"use client"`; `WorldViewport` is loaded with `dynamic(..., { ssr: false })`.
-11. **Schema is the source of truth.** Change `src/db/schema.ts`, then `drizzle-kit generate` (commit the SQL in
+12. **Schema is the source of truth.** Change `src/db/schema.ts`, then `drizzle-kit generate` (commit the SQL in
     `./drizzle`) or `push` for local work. Don't hand-edit production tables.
-12. **Terrain changes invalidate caches.** Existing `terrain_regions` rows are keyed by seed/size/cells, not by
+13. **Terrain changes invalidate caches.** Existing `terrain_regions` rows are keyed by seed/size/cells, not by
     algorithm version. After changing the terrain maths, either bump `terrainSeed` or truncate
     `terrain_regions` — otherwise old parcels render the old land.
 
@@ -378,12 +459,13 @@ Baseline lint state (pre-existing; don't chase these unless the task is to fix t
 
 | File | Line | Rule | Note |
 | --- | --- | --- | --- |
-| `src/app/world/panels.tsx` | 126 | `react-hooks/set-state-in-effect` | hover → coordinate sync |
-| `src/app/world/panels.tsx` | 667 | `react-hooks/set-state-in-effect` | ConfigModal draft sync |
-| `src/app/world/panels.tsx` | 793 | `react-hooks/rules-of-hooks` | `void useNoop()` left in |
-| `src/app/world/viewport.tsx` | 1159 | `react-hooks/refs` | ref written during render |
-| `src/app/page.tsx` | 67 | `@next/next/no-img-element` | warning |
-| `src/app/world/panels.tsx` | 531 | `react-hooks/exhaustive-deps` | warning |
+| `src/app/world/panels.tsx` | ~130 | `react-hooks/set-state-in-effect` | hover → coordinate sync (PilotConsole) |
+| `src/app/world/panels.tsx` | ~686 | `react-hooks/set-state-in-effect` | ConfigModal draft sync |
+| `src/app/world/panels.tsx` | ~812 | `react-hooks/rules-of-hooks` | `void useNoop()` left in |
+| `src/app/world/viewport.tsx` | ~1199 | `react-hooks/refs` | ref written during render |
+| `src/app/world/panels.tsx` | ~550 | `react-hooks/exhaustive-deps` | warning (Minimap) |
+
+(Line numbers drift; the count is the invariant: currently **4 errors / 1 warning**.)
 
 `npm run typecheck` and `next build` both pass today; `next build` **requires** `POSTGRES_URL` to be defined.
 
@@ -451,6 +533,22 @@ Every recipe below lists files in the order you should touch them. The linked ta
 `engine` (pure maths/catalogue) → `schema` (+ migration) → `lib/types` → `lib/server` → `api/route` →
 `store` action/state → `panels` UI → `viewport` scene → docs (`README` tables) → smoke test.
 
+**H. New theme (or a new theme token)**
+1. `src/engine/themes.ts` — a new `Theme` constant with the full `ThemeColors` map (derive it from `glassFor` /
+   `solidPanel` / `accent`, don't hand-pick raw values), a `glow` pair and a `map` palette (`themedMap()`).
+2. Register it in `BASE_THEMES` and `THEME_IDS`.
+3. If it needs a new colour *token*: add it to `ThemeColors`, `THEME_TOKEN_KEYS`, every theme, and the
+   `@theme inline` block in `globals.css`.
+4. `src/app/world/panels.tsx` — an entry in `ThemeModal`'s `options` array (with a `MapPreview` palette).
+5. Verify: `isReadableTheme(theme)` must be true; spot-check `contrastRatio(ink, void) ≥ 7`.
+6. Nothing else. Components never name a theme.
+
+**I. Change the flat map (bands, ramps, classification)**
+1. `src/engine/palette.ts` — `classifyLand()` for which band a cell belongs to; `waterFactor` / `sandFactor` /
+   `landFactor` for where it sits on the ramp; `CARTO` for the ramp stops.
+2. Bump nothing else — the viewer repaints from `paletteKey`, and the minimap + landing legend read the same module.
+3. If the change is user-visible, update the legend copy in `src/app/page.tsx` and §8's band table here.
+
 ---
 
 ## 10. Known gaps & rough edges
@@ -461,7 +559,13 @@ Current, verified state — useful as a task list rather than a wish list.
   A pilot id in `localStorage` is a bearer token with no rotation or revocation.
 - **`jump` is dead code.** Declared in `ClaimBody` but the switch has no case → 400.
 - **`adopt`** is accepted by `POST /api/player` but never used.
-- **Missing assets.** No `public/` directory; `/images/sector-hero.jpg` is referenced by the landing page and 404s.
+- **Hero asset removed, not replaced.** The landing page no longer references `/images/sector-hero.jpg`; there
+  is still no `public/` directory. The hero is a CSS `theme-glow` gradient, which is harder to customise than an image.
+- **`/api/tiles` is now orphaned in the UI.** The streamer route, tile cache table and `X-Simplayz-Overlay`
+  headers still work and are still public API, but nothing in the flat renderer requests them. Either repurpose the
+  streamer for authored overlays or retire it in a future release.
+- **Flat map hides elevation.** Elevation still drives build cost, slope refusals and defense, but the map no longer
+  draws it — a `ok: 2` steep cell looks identical to flat ground. Consider a hatch overlay.
 - **Duplicated config defaults** in four places (§6) — the most likely source of drift in this repo.
 - **Hardcoded economy prices** in route handlers (§7) rather than in `world_config`.
 - **`listClaims` filters after `LIMIT 96`** in JS for `ids`/`ownerIds`, so it can miss rows at scale.
@@ -485,9 +589,15 @@ Current, verified state — useful as a task list rather than a wish list.
 | **Seal / lock** | The `lockHours` window during which a parcel cannot be assaulted |
 | **Tick** | The `tickMinutes` economy heartbeat that accrues credits |
 | **Tour** | First/third-person walking mode over the same scene |
-| **Streamer** | The internal `/api/tiles` proxy that caches upstream raster and reports overlay state |
+| **Streamer** | The internal `/api/tiles` proxy that caches upstream raster and reports overlay state (still live, no longer used by the flat renderer) |
 | **Prestige** | Score from structures; scales loot and defense in assaults |
 | **Integrity** | Structure health (0–100) multiplying its economic output |
+| **Flat map** | The 1.0.0 rendering: unlit terrain geometry painted by hue (water/sand/land ramps) |
+| **Band** | One of the three flat-map colour families: water, sand, land |
+| **Palette / ramp** | A pair of colour stops a band interpolates between (`MapPalette`) |
+| **Map style** | `cartographic` (fixed hue = data) or `themed` (ramps follow the UI theme) |
+| **Token** | A themeable CSS custom property written to `<html>` and exposed to Tailwind |
+| **Glass** | The single `.panel` surface: translucent tint + `backdrop-filter` + hairline edge |
 
 ---
 

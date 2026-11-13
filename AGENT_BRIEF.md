@@ -23,7 +23,9 @@ Rules for this task:
 - All client data flows through the zustand store (src/app/world/store.ts) using its api() helper — no fetch in components.
 - All DB rows are mapped to DTOs declared in src/lib/types.ts, produced in src/lib/server.ts. Never send raw rows to the client.
 - Keep the "degrade without a database" invariant: new DB reads/writes are wrapped so an outage falls back instead of throwing a 500.
-- Reuse the existing design tokens and CSS utilities (panel, label, btn, chip, Modal, Bar) — no new colors unless I ask.
+- NEVER hard-code a colour. Use theme tokens (bg-void, text-ink, text-dim, text-faint, border-line, text-mint,
+  text-amber, text-ice, text-rose) and glass utilities (panel, pane, label, btn, chip). All four themes must look right.
+- The world renders as a flat map (src/engine/palette.ts): hue = data, no relief shading, no raster.
 - Match local style: banner comments, why-not-what comments.
 
 When done, run and report the result of:
@@ -212,6 +214,58 @@ Report findings as: file:line — rule violated — suggested fix. Don't edit fi
 
 ---
 
+## 9b. New theme, or a new themeable token
+
+```text
+Task: add a theme called "<Name>" (id <id>) to the glass system.
+
+Follow recipe H in README §9:
+1. src/engine/themes.ts — build the theme with glassFor() / solidPanel() / accent() and themedMap(); do not hand-pick
+   raw values that bypass those helpers. Fill every field of ThemeColors. Register it in BASE_THEMES and THEME_IDS.
+2. If you need a NEW colour token: add it to ThemeColors, THEME_TOKEN_KEYS, every theme entry, and the
+   `@theme inline` block in src/app/globals.css. Tell me before you do this.
+3. src/app/world/panels.tsx — add an entry to ThemeModal's `options` array with a MapPreview palette.
+4. Guarantee readability: isReadableTheme(theme) must return true; report contrastRatio(ink, void) and
+   contrastRatio(mint, void).
+
+Spec: surface <hex>, accent <hex>, scheme <dark|light>, map ramps <keep cartographic | theme-tinted>
+Acceptance: the theme applies live from APPEARANCE, survives a reload with no flash, and every HUD panel,
+modal, toast and button stays readable in it.
+```
+
+## 9c. Change the flat map (bands / ramps / classification)
+
+```text
+Task: change how the flat map paints <water | beach | land> — <exact visual intent>.
+
+Follow recipe I in README §9:
+1. src/engine/palette.ts — classifyLand() decides the band; waterFactor/sandFactor/landFactor decide position on the
+   ramp; CARTO holds the ramp stops. Change only what the task needs.
+2. The viewer repaints automatically from paletteKey; do NOT touch viewport.tsx unless the geometry changes.
+3. Update the legend copy in src/app/page.tsx (legend array) and the band table in README §8 if the change is visible.
+
+Constraint: never make water, sand and land the same hue family; the map must stay readable for a colour-blind reader.
+Acceptance: paintFlatColor() output for sea/beach/mountain is visually distinct (report the three hex values), the
+minimap matches the 3D view, and all four themes still produce legible maps with map style "themed".
+```
+
+## 9d. Touch the viewer / 3D scene
+
+```text
+Task: <scene change>.
+
+Read src/app/world/viewport.tsx applyView() before editing. The scene diffs on three keys:
+  sectorKey  — terrain seed, rebuilds tiles
+  paletteKey — the 7 ramp stops, repaints tiles in place
+  claimsKey  — claims/config, rebuilds claim geometry
+If your change introduces new scene data, extend the matching key or the scene will not update.
+The 1.0.0 world is FLAT: localGround() returns 0, terrain uses MeshBasicMaterial, there is no fog, no water plane and
+no raster. Do not reintroduce relief, textures or atmosphere unless I explicitly ask for them.
+Release anything you create in dispose().
+Acceptance: toggling the theme repaints without re-streaming; changing terrainSeed rebuilds; no console errors; FPS
+unchanged within a few points.
+```
+
 ## 10. Where to point the agent (cheat sheet)
 
 | You want to change… | Open first | Then |
@@ -225,7 +279,11 @@ Report findings as: file:line — rule violated — suggested fix. Don't edit fi
 | What the client can see | `src/lib/types.ts` (`WorldSnapshot`) | `lib/server.ts` `snapshot()` |
 | A persisted field | `src/db/schema.ts` | migration + DTO + mapper |
 | Live-tunable numbers | `src/db/schema.ts` → `lib/server.ts` → `store.ts` → `ConfigModal` | README §6 |
-| Styling / colors / animations | `src/app/globals.css` | — |
+| Styling / colors / animations | `src/app/globals.css` | `src/engine/themes.ts` for new tokens |
+| A theme (or theme token) | `src/engine/themes.ts` | `panels.tsx` ThemeModal, `globals.css` `@theme inline` |
+| The flat map's colours/bands | `src/engine/palette.ts` | `src/app/page.tsx` legend, README §8 |
+| What the map is painted from | `palette.ts` `paintFlatColor` + `viewport.tsx` `buildOneTile` | `repaintSector` for theme-only updates |
+| Theme persistence / boot script | `src/lib/theme.ts` + `layout.tsx` | `src/app/theme-store.ts` |
 
 ---
 
