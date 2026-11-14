@@ -7,6 +7,7 @@ import { useWorld } from "./store";
 import { useTheme } from "../theme-store";
 import { AdvisorAgent, AssaultReport, BuildPalette, ConfigModal, EventTicker, HelpModal, IntelModal, Minimap, OnboardModal, ParcelInspector, PilotConsole, ThemeModal, Toasts, TopBar } from "./panels";
 import type { Telemetry } from "./viewport";
+import { useEventStream } from "./use-event-stream";
 
 const WorldViewport = dynamic(() => import("./viewport").then((m) => m.default), {
   ssr: false,
@@ -44,6 +45,10 @@ export default function WorldPage() {
     useTheme.getState().hydrate();
     void boot();
   }, [boot]);
+
+  // Notifications arrive over SSE; the poll below stays as the resync path so a
+  // dropped stream degrades to the old behaviour instead of freezing the world.
+  useEventStream();
 
   useEffect(() => {
     const t = setInterval(() => {

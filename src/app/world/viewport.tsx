@@ -10,10 +10,10 @@
 import * as THREE from "three";
 import { useEffect, useRef } from "react";
 import { SectorFrame, metersPerPixel, tileForLngLat } from "@/engine/geo";
-import { BIOMES, quickSample, sampleTerrain, surveyParcel, type SurveyResult } from "@/engine/terrain";
+import { BIOMES, heightAtLngLat, quickSample, sampleTerrain, surveyParcel, type SurveyResult } from "@/engine/terrain";
 import { KIND_MAP, effectiveHeight, footprintFor } from "@/engine/buildings";
 import { hashSeed } from "@/engine/terrain";
-import { CARTO_PALETTE, paintFlatColor, type MapPalette } from "@/engine/palette";
+import { CARTO_PALETTE, classifyLand, paintFlatColor, type MapPalette } from "@/engine/palette";
 import type { MapStyle, Theme } from "@/engine/themes";
 import type { ClaimDTO, WorldConfigDTO } from "@/lib/types";
 import { useWorld, type HoverInfo, type Mode } from "./store";
@@ -168,7 +168,7 @@ export class SimplayzEngine {
   private sky!: THREE.Mesh;
   private stars!: THREE.Points;
   private water!: THREE.Mesh;
-  private gridHelper!: THREE.LineSegments;
+  private gridHelper: THREE.LineSegments | null = null;
   private sectorGroup = new THREE.Group();
   private claimGroup = new THREE.Group();
   private avatarGroup = new THREE.Group();
@@ -198,6 +198,8 @@ export class SimplayzEngine {
   /** provenance of the most recent tile the streamer returned */
   private overlayState = "raw";
   private overlayAborts: AbortController[] = [];
+  /** vertical exaggeration applied to the sampled relief (from world config) */
+  private reliefScale = 1.35;
   private seed = 20770418;
   /** flat map ramp currently painted (colour-as-data cartography by default) */
   private map: MapPalette = CARTO_PALETTE;
@@ -307,26 +309,43 @@ export class SimplayzEngine {
    * transform helpers elsewhere in the tick loop.
    */
   private buildWater() {
-    const geo = new THREE.PlaneGeometry(1, 1, 1, 1);
+    // Terrain displaced below 0 would otherwise be bare sky under the shore.
+    // One translucent plane at y=0 is the single water level for the sector —
+    // cheap, and it keeps rivers and lakes visually continuous.
+    const span = this.frame.sizeM * TILES_WIDE;
+    const geo = new THREE.PlaneGeometry(span, span, 1, 1);
     geo.rotateX(-Math.PI / 2);
-    const mat = new THREE.MeshBasicMaterial({ visible: false });
+    const mat = new THREE.MeshBasicMaterial({
+      color: this.map.water[0],
+      transparent: true,
+      opacity: 0.86,
+      depthWrite: false,
+    });
     this.water = new THREE.Mesh(geo, mat);
-    this.water.visible = false;
+    this.water.position.y = 0.05;
+    this.water.renderOrder = 1;
     this.scene.add(this.water);
   }
 
   private buildGrid() {
     const span = this.frame.sizeM * TILES_WIDE;
     const step = 250;
+    // Sample along each line so the grid follows the surface instead of
+    // floating across valleys.
+    const seg = 48;
     const pts: number[] = [];
     for (let v = -span / 2; v <= span / 2 + 1; v += step) {
-      pts.push(-span / 2, 0, v, span / 2, 0, v);
-      pts.push(v, 0, -span / 2, v, 0, span / 2);
+      for (let i = 0; i < seg; i++) {
+        const a = -span / 2 + (span * i) / seg;
+        const b = -span / 2 + (span * (i + 1)) / seg;
+        pts.push(a, this.localGround(a, v), v, b, this.localGround(b, v), v);
+        pts.push(v, this.localGround(v, a), a, v, this.localGround(v, b), b);
+      }
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+    // heights are baked into the vertices, so no constant lift is needed
     this.gridHelper = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x9fb8c4, transparent: true, opacity: 0.14 }));
-    this.gridHelper.position.y = 1.5;
     this.scene.add(this.gridHelper);
   }
 
@@ -335,13 +354,25 @@ export class SimplayzEngine {
   setCenter(lng: number, lat: number) {
     this.frame = new SectorFrame(lng, lat, 15, TILES_WIDE);
     const t = this.frame.lngLatToLocal(lng, lat);
-    this.camRig.target.set(t.x, 0, t.y);
-    this.av.pos.set(t.x, 0, t.y);
-    const base = new THREE.Vector3(t.x, 0, t.y);
+    // 0.05 m stands in for the water plane; sample the real surface so a new
+    // center starts above the ground rather than buried in a hillside.
+    const g = this.localGround(t.x, t.y);
+    const base = new THREE.Vector3(t.x, g, t.y);
     this.camRig.target.copy(base);
     this.av.pos.copy(base);
+    // the grid is baked with world heights, so it must be rebuilt per sector
+    this.rebuildGrid();
     this.rebuildSector();
     if (this.view) this.applyView(this.view);
+  }
+
+  private rebuildGrid() {
+    if (!this.gridHelper) return;
+    this.scene.remove(this.gridHelper);
+    this.gridHelper.geometry.dispose();
+    (this.gridHelper.material as THREE.Material).dispose();
+    this.gridHelper = null;
+    this.buildGrid();
   }
 
   private rebuildSector() {
@@ -401,9 +432,7 @@ export class SimplayzEngine {
       const ly = oy + pos.getZ(i);
       const ll = this.frame.localToLngLat(lx, ly);
       const s = quickSample(ll.lng, ll.lat, this.seed);
-      // the surface is flat; the analytic relief is kept only for hero/impact maths
-      pos.setY(i, 0);
-      const rgb = paintFlatColor(palette, {
+      const paint = {
         h: s.h,
         wet: s.wet,
         forest: s.forest,
@@ -411,7 +440,13 @@ export class SimplayzEngine {
         river: s.river,
         biome: s.biome,
         classified: s.biome,
-      });
+      };
+      // The relief is real terrain now, but open water is pinned to a single
+      // level: lake beds would otherwise ripple the shoreline. Land keeps its
+      // raw height (never below 0) so hills read as mass.
+      const water = classifyLand(paint) === "water";
+      pos.setY(i, water ? 0 : Math.max(0, s.h) * this.reliefScale);
+      const rgb = paintFlatColor(palette, paint);
       colors[i * 3] = rgb.r / 255;
       colors[i * 3 + 1] = rgb.g / 255;
       colors[i * 3 + 2] = rgb.b / 255;
@@ -449,8 +484,17 @@ export class SimplayzEngine {
     const off = this.frame.tileLocal(tx, ty);
     const key = `15/${tx}/${ty}`;
 
+    // Subdivided like the base so the drape can follow the relief instead of
+    // slicing through hillsides. Same SEG count, so vertices line up exactly.
+    const planeGeo = new THREE.PlaneGeometry(size, size, SEG, SEG).rotateX(-Math.PI / 2);
+    const pp = planeGeo.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < pp.count; i++) {
+      pp.setY(i, this.localGround(off.x + size / 2 + pp.getX(i), off.y + size / 2 + pp.getZ(i)) + 2.5);
+    }
+    planeGeo.computeVertexNormals();
+
     const plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(size, size).rotateX(-Math.PI / 2),
+      planeGeo,
       new THREE.MeshBasicMaterial({
         transparent: true,
         opacity: 0,
@@ -602,15 +646,18 @@ export class SimplayzEngine {
   }
 
   /**
-   * Ground height for anything that must sit on the surface. The 1.0.0
-   * world is rendered flat, so this is always 0 — the analytic relief is
-   * still available via the terrain module for gameplay maths (the survey
-   * runs on real elevation even though the map does not show it).
+   * Ground height in scene units for anything that must sit on the surface.
+   *
+   * The terrain field is in metres, and so is the sector frame, so this needs
+   * no unit conversion — only `reliefScale` (the pilot-facing exaggeration,
+   * default 1.35). Over a 3.6 km sector the sampled relief spans roughly
+   * 84-290 m, which at 1.35 gives a ~1:10 vertical ratio: dramatic enough to
+   * read as terrain from the bird camera without turning the sector into a
+   * canyon.
    */
   private localGround(lx: number, lz: number) {
-    void lx;
-    void lz;
-    return 0;
+    const ll = this.frame.localToLngLat(lx, lz);
+    return heightAtLngLat(ll.lng, ll.lat, this.seed) * this.reliefScale;
   }
 
   /* ------------------------------ claims ------------------------------ */
@@ -629,6 +676,7 @@ export class SimplayzEngine {
     ].join("|");
     this.view = view;
     this.seed = view.config.terrainSeed;
+    this.reliefScale = view.config.reliefScale;
 
     const layersChanged = view.mapLayers !== this.mapLayers || view.tileOpacity !== this.tileOpacity;
     this.mapLayers = view.mapLayers;
@@ -1021,7 +1069,39 @@ export class SimplayzEngine {
   private groundPoint(): THREE.Vector3 | null {
     this.ray.setFromCamera(this.pointer, this.camera);
     const hits = this.ray.intersectObjects(this.tileMeshes, false);
-    return hits.length ? hits[0].point.clone() : null;
+    if (hits.length) return hits[0].point.clone();
+    // A ray can pass over a summit and miss the mesh entirely when looking
+    // along a ridge. Fall back to marching the analytic heightfield so the
+    // build cursor still lands somewhere sensible.
+    return this.marchGround();
+  }
+
+  /** Cheap heightfield marcher: 40 steps of 12 m, then one bisection refine. */
+  private marchGround() {
+    const o = this.ray.ray.origin.clone();
+    const d = this.ray.ray.direction.clone();
+    const at = (t: number) => {
+      const p = o.clone().addScaledVector(d, t);
+      return p.y - this.localGround(p.x, p.z);
+    };
+    let prev = 0;
+    let prevV = at(0);
+    for (let t = 12; t <= 480; t += 12) {
+      const v = at(t);
+      if (prevV > 0 && v <= 0) {
+        let lo = prev;
+        let hi = t;
+        for (let k = 0; k < 8; k++) {
+          const mid = (lo + hi) / 2;
+          if (at(mid) > 0) lo = mid;
+          else hi = mid;
+        }
+        return o.clone().addScaledVector(d, (lo + hi) / 2);
+      }
+      prev = t;
+      prevV = v;
+    }
+    return null;
   }
 
   private lastHoverEmit = 0;
@@ -1270,7 +1350,8 @@ export class SimplayzEngine {
     if (this.scene.fog) this.scene.fog = null;
     this.renderer.setClearColor(bottom, 1);
 
-    this.gridHelper.position.set(this.camRig.target.x, 1.5, this.camRig.target.z);
+    // The grid's vertices carry real world heights, so it is anchored to the
+    // sector origin: sliding it with the camera would tilt the map surface.
 
     // gameplay overlays keep their animation
     for (const obj of this.claimGroup.children) {

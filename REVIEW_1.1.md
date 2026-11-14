@@ -1,5 +1,10 @@
 # Simplayz 1.1.0 — code review & enhancement plan
 
+> **Status (1.2.0):** E1, E2 and E3 have shipped. E3 landed as real vertex relief + coastline pinning + a
+> heightfield picking fallback; E2 as `/api/stream` (SSE with a per-pilot cursor) and `eventsForPilot()`; E1 as a
+> gross → upkeep → net breakdown in the inspector — `applyTicks()` was already correct and was left alone.
+> §3.1, §3.2 and §3.5 below describe the 1.1.0 state and are kept as the record of what was wrong.
+
 Reviewed against the product statement:
 
 > **Simplayz world simulator** streams real OpenStreetMap raster at zoom 15, then re-hallucinates the surface: relief, drainage, soil, canopy and legacy sprawl are synthesised from a seeded field model, stored in Postgres and handed to a three.js sector viewer. Lock 1000 m of ground around your own coordinates, raise dwellings, fields, fabs and megastructures on a 48×48 grid, then walk what you built in first or third person. Nobody can touch your parcel for 72 hours. After that, it is target practice.
@@ -72,13 +77,13 @@ Ordered by leverage against the statement, not by effort. Each is scoped to be i
 
 ### Tier 1 — closes the gap between the pitch and the product
 
-**E1. Make the tick legible.**
+**E1. Make the tick legible.** *(shipped in 1.2.0)*
 `applyTicks()` is already correct; do not rewrite it. Instead surface it: a credits delta floating on each producing structure when it ticks, a "accruing since HH:MM" line on the claim card, and a per-kind breakdown of `netIncome` in `computeTotals()`. Then add the *pressure* the current design lacks — `upkeep` proportional to footprint, so a parcel left idle while sealed bleeds credits. That is what converts a lock window into a decision: seal it and pay upkeep, or open it and risk an assault while it earns.
 
-**E2. Live presence over SSE.**
+**E2. Live presence over SSE.** *(shipped in 1.2.0)*
 `/api/stream` using `ReadableStream` — tail `worldEvents` by id cursor and push the new rows for claims you own. Postgres `LISTEN/NOTIFY` is the upgrade, not the starting point: a 3–5 s server-side poll inside the route handler is simpler and holds the stream open just as well. Push: assault incoming, lock expiring within an hour, another pilot entering your parcel, your own tick posting. Keep the existing 25 s `refresh()` as the resync fallback so a dropped stream degrades instead of freezing.
 
-**E3. Give the ground its relief.**
+**E3. Give the ground its relief.** *(shipped in 1.2.0)*
 Set `vertex.y = heightAtM(x, z, seed) * reliefScale * 0.06` on the 26×26 grid in `buildOneTile()`, keep `reliefScale` as the single knob, and tilt the overlay plane with the same field (subdivide it to match). `localGround()` then returns the real sampled height so buildings sit on the slope instead of a plane. The field model already exists — this is renderer-only work and it is the difference between "coloured map" and "terrain".
 
 ### Tier 2 — depth for players who stay

@@ -461,6 +461,19 @@ export function ParcelInspector() {
         <Bar label="population" value={totals.population} max={500} color="#68b7ff" />
         <Bar label="prestige" value={claim.prestige} max={200} color="#c5a3ff" />
       </div>
+      {/* A negative tick looks like a bug until the upkeep is broken out. Show the
+          gross -> upkeep -> net chain rather than a single unexplained number. */}
+      <div className="flex items-center justify-between gap-2 border border-line/60 bg-glass px-2 py-1 text-[10px] tabular-nums">
+        <span className="text-faint">gross</span>
+        <span className="text-mint">+{totals.income}</span>
+        <span className="text-faint">upkeep</span>
+        <span className="text-amber">−{totals.upkeep}</span>
+        <span className="text-faint">net</span>
+        <span className={totals.netIncome >= 0 ? "text-mint" : "text-red-400"}>
+          {totals.netIncome >= 0 ? "+" : ""}
+          {totals.netIncome}/tick
+        </span>
+      </div>
       {totals.disconnected.length > 0 && <div className="border border-amber/40 bg-amber/10 px-2 py-1 text-[10px] text-amber">{totals.disconnected.join(", ")} lack road service — output at 35%</div>}
       <div className="flex gap-1">
         <button className="btn flex-1 py-1" onClick={() => setMode(mine ? "build" : "tps")}>{mine ? "TO BUILD" : "TO TOUR"}</button>

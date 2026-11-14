@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { buildings as buildingsTable, claims as claimsTable, players as playersTable, terrainRegions, tileCache, worldConfig, worldEvents } from "@/db/schema";
 import { surveyParcel, type SurveyResult } from "@/engine/terrain";
@@ -364,16 +364,60 @@ export async function logEvent(entry: { claimId?: string | null; actorId?: strin
 export async function recentEvents(limit = 18): Promise<EventDTO[]> {
   try {
     const rows = await db.select().from(worldEvents).orderBy(desc(worldEvents.id)).limit(limit);
-    return rows.map((r) => ({
-      id: r.id,
-      type: r.type,
-      message: r.message,
-      claimId: r.claimId,
-      actorId: r.actorId,
-      createdAt: new Date(r.createdAt).toISOString(),
-    }));
+    return rows.map(toEventDTO);
   } catch {
     return [];
+  }
+}
+
+function toEventDTO(r: typeof worldEvents.$inferSelect): EventDTO {
+  return {
+    id: r.id,
+    type: r.type,
+    message: r.message,
+    claimId: r.claimId,
+    actorId: r.actorId,
+    createdAt: new Date(r.createdAt).toISOString(),
+  };
+}
+
+/**
+ * Events that concern one pilot: everything touching a parcel they own, plus
+ * anything they did themselves.
+ *
+ * The unscoped `recentEvents()` tail is fine for the public world log, but it
+ * is the wrong feed for a notification — in a busy world your own assault
+ * notice gets pushed off the end of an 18-row list long before you see it.
+ */
+export async function eventsForPilot(pilotId: string, afterId = 0, limit = 40): Promise<EventDTO[]> {
+  try {
+    const owned = await db.select({ id: claimsTable.id }).from(claimsTable).where(eq(claimsTable.ownerId, pilotId));
+    const ids = owned.map((r) => r.id);
+    const base = afterId > 0 ? gt(worldEvents.id, afterId) : undefined;
+    const rows = await db
+      .select()
+      .from(worldEvents)
+      .where(
+        ids.length
+          ? and(base, or(inArray(worldEvents.claimId, ids), eq(worldEvents.actorId, pilotId)))
+          : and(base, eq(worldEvents.actorId, pilotId)),
+      )
+      .orderBy(desc(worldEvents.id))
+      .limit(limit);
+    // newest-first for the API, but the stream wants chronological order
+    return rows.map(toEventDTO).reverse();
+  } catch {
+    return [];
+  }
+}
+
+/** Opaque cursor for the event stream: highest id, or 0 on a cold start. */
+export async function latestEventId(): Promise<number> {
+  try {
+    const rows = await db.select({ id: worldEvents.id }).from(worldEvents).orderBy(desc(worldEvents.id)).limit(1);
+    return rows[0]?.id ?? 0;
+  } catch {
+    return 0;
   }
 }
 
