@@ -16,6 +16,7 @@ Everything that can be tuned is a row in `world_config`. Nothing about the balan
 - **Stack:** Next.js 16 (App Router, Turbopack) · React 19 · TypeScript (strict) · Tailwind CSS 4 · three.js · zustand · Drizzle ORM · PostgreSQL
 - **Source size:** ~6.6k lines across 28 TypeScript files
 - **Working with an AI agent?** Read [`AGENT_BRIEF.md`](./AGENT_BRIEF.md) — it contains copy-paste prompts.
+- **Rebuilding from scratch with another model?** Read [`BUILD_PROMPT.md`](./BUILD_PROMPT.md) — a full specification.
 
 ## What 1.2.0 changed
 
