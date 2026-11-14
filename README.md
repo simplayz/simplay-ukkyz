@@ -1,4 +1,4 @@
-# Simplayz — v1.1.0
+# Simplayz — v1.2.0
 
 **A persistent, browser-based sector simulation.**
 
@@ -16,6 +16,17 @@ Everything that can be tuned is a row in `world_config`. Nothing about the balan
 - **Stack:** Next.js 16 (App Router, Turbopack) · React 19 · TypeScript (strict) · Tailwind CSS 4 · three.js · zustand · Drizzle ORM · PostgreSQL
 - **Source size:** ~6.6k lines across 28 TypeScript files
 - **Working with an AI agent?** Read [`AGENT_BRIEF.md`](./AGENT_BRIEF.md) — it contains copy-paste prompts.
+
+## What 1.2.0 changed
+
+| Area | 1.2.0 behaviour |
+| --- | --- |
+| **Terrain relief** | The flat base is a real surface. Every vertex samples `heightAtLngLat()` × `reliefScale` (default 1.35 ≈ 1:10 vertical), open water is pinned to a single level, and a translucent plane at `y = 0.05` is the one water surface. Buildings, parcels, the avatar and the tour camera all sit on the sampled ground — `localGround()` finally returns the terrain instead of `0` |
+| **Grid** | Follows the relief (48 samples per line) and is rebuilt per sector, since the heights are baked into its vertices |
+| **Picking** | Unchanged on land: `groundPoint()` raycasts the tile meshes. When a ray misses the mesh along a ridge it falls back to a heightfield marcher (12 m steps + bisection) |
+| **Live notifications** | `GET /api/stream?pilot=` is a Server-Sent Events channel. `eventsForPilot()` matches events on parcels you own *or* your own actions, so a busy world cannot push your assault notice out of an 18-row global tail. `use-event-stream.ts` reconnects with `since` cursor + backoff; the 25 s poll stays as resync |
+| **Tick legibility** | The parcel inspector now shows `gross → upkeep → net` instead of one unexplained number, so a negative tick reads as a cost rather than a bug |
+| **Still true** | `applyTicks()` was already correct (lazy per-claim accrual, 48-tick cap, `greatest(0, …)`) and is unchanged — this release only surfaces it |
 
 ## What 1.1.0 changed
 
@@ -572,11 +583,15 @@ Current, verified state — useful as a task list rather than a wish list.
 - **`adopt`** is accepted by `POST /api/player` but never used.
 - **Hero asset removed, not replaced.** The landing page no longer references `/images/sector-hero.jpg`; there
   is still no `public/` directory. The hero is a CSS `theme-glow` gradient, which is harder to customise than an image.
+- **`/api/stream` holds a connection open.** It polls Postgres every 3 s per connected pilot rather than using
+  `LISTEN/NOTIFY`; at a few hundred concurrent pilots that is a lot of idle queries. Move to `LISTEN/NOTIFY` (or a
+  shared cursor poller) before this is public.
 - **`/api/tiles` is used again (1.1.0).** The flat base stays authoritative for raycasts and placement; the
   streamed raster is a semi-transparent drape above it. It is still not the *surface* — see REVIEW_1.1.md §3.5 for
   the missing relief pass.
-- **Flat map hides elevation.** Elevation still drives build cost, slope refusals and defense, but the map no longer
-  draws it — a `ok: 2` steep cell looks identical to flat ground. Consider a hatch overlay.
+- **Elevation is drawn again (1.2.0), but not shaded.** The surface carries real relief, so a steep cell now *looks*
+  steep and casts the shadows of its own silhouette against the sky. It is still unlit `MeshBasicMaterial`, so there is
+  no hillshade — slope legibility comes from hue and silhouette only. A hatch overlay for `ok: 2` cells is still open.
 - **Duplicated config defaults** in four places (§6) — the most likely source of drift in this repo.
 - **Hardcoded economy prices** in route handlers (§7) rather than in `world_config`.
 - **`listClaims` filters after `LIMIT 96`** in JS for `ids`/`ownerIds`, so it can miss rows at scale.
